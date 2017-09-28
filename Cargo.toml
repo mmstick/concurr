@@ -1,0 +1,27 @@
+[package]
+name = "concurr"
+version = "0.1.0"
+authors = ["Michael Aaron Murphy <mmstickman@gmail.com>"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/mmstick/concurr"
+description = "Concurrent / parallel / distributed command-line job server & client"
+
+[[bin]]
+name = "concurr"
+path = "src/client/main.rs"
+
+[[bin]]
+name = "concurr-jobsd"
+path = "src/server/main.rs"
+
+[dependencies]
+bytes = "0.4"
+futures = "0.1"
+ion-shell = { git = "https://github.com/redox-os/ion/" }
+libc = "0.2"
+num_cpus = "1.0"
+tokio-core = "0.1"
+tokio-io = "0.1"
+tokio-proto = "0.1"
+tokio-service = "0.1"
