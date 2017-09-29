@@ -39,7 +39,7 @@ impl Connection {
 
     pub fn send_command(&mut self, command: &str) -> io::Result<usize> {
         let mut stream = TcpStream::connect(self.address)?;
-        stream.write_all(["com ", command, "\r\n"].concat().as_bytes());
+        stream.write_all(["com ", command, "\r\n"].concat().as_bytes())?;
         let mut string = String::new();
         BufReader::new(stream).read_line(&mut string)?;
         let id = string[..string.len() - 1]
