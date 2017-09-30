@@ -16,6 +16,10 @@ name = "concurr-jobsd"
 path = "src/server/main.rs"
 
 [dependencies]
+serde = "1.0"
+serde_derive = "1.0"
+toml = "0.4"
+app_dirs = "1.1"
 bytes = "0.4"
 futures = "0.1"
 ion-shell = { git = "https://github.com/redox-os/ion" }

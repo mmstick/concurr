@@ -14,6 +14,9 @@ pub enum Token {
     Text(String),
 }
 
+const PLACE: u8 = 1;
+const OPEN: u8 = 2;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreparedCommand {
     pub tokens: Vec<Token>,
@@ -24,24 +27,23 @@ impl PreparedCommand {
         let mut tokens = Vec::new();
         let mut start = 0;
         // Value will be set to true when a placeholder token is utilized.
-        let mut placeholder = false;
-        let mut open = false;
+        let mut flags = 0;
 
         for (id, character) in input.char_indices() {
             match character {
-                '{' if !open => {
-                    open = true;
+                '{' if flags & OPEN == 0 => {
+                    flags |= OPEN;
                     if start != id {
                         tokens.push(Token::Text(String::from(&input[start..id])));
                         start = id;
                     }
                 }
-                '}' if open => {
-                    open = false;
+                '}' if flags & OPEN != 0 => {
+                    flags ^= OPEN;
                     match &input[start..id + 1] {
                         "{}" => {
                             tokens.push(Token::Placeholder);
-                            placeholder = true;
+                            flags |= PLACE;
                         }
                         "{%}" => tokens.push(Token::Slot),
                         "{#}" => tokens.push(Token::Job),
@@ -59,7 +61,7 @@ impl PreparedCommand {
         }
 
         // If a placeholder token was not supplied, append one at the end of the command.
-        if !placeholder {
+        if flags & PLACE == 0 {
             let mut append_text = false;
             match tokens.last_mut() {
                 Some(&mut Token::Text(ref mut string)) => string.push(' '),

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, BufRead, BufReader, Write};
-use std::net::{SocketAddr, TcpStream, Shutdown};
+use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -38,7 +38,7 @@ pub fn spawn(
 
             if let Some(stdout) = lines.next() {
                 if let Some(stderr) = lines.next() {
-                    let output = (status, unescape(stdout?), unescape(stderr?));
+                    let output = (status, unescape(&stdout?), unescape(&stderr?));
                     let mut outputs = outputs.lock().unwrap();
                     outputs.insert(id, output);
                     continue;
@@ -57,7 +57,7 @@ fn parse_usize(input: &str) -> io::Result<usize> {
     input.parse::<usize>().map_err(|_| io::Error::new(io::ErrorKind::Other, "ID is NaN"))
 }
 
-fn unescape(input: String) -> String {
+fn unescape(input: &str) -> String {
     let mut start = 0;
     let mut string = String::with_capacity(input.len());
     let mut chars = input.char_indices();

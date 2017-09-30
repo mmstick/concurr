@@ -1,19 +1,29 @@
+extern crate app_dirs;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+extern crate toml;
+
 mod args;
+mod configure;
 mod connection;
+mod nodes;
 mod slot;
 
 use args::{ArgUnit, Arguments};
-use connection::Connection;
 use std::collections::{BTreeMap, VecDeque};
+use std::io::{self, Write};
 use std::process::exit;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
-const LOCALHOST: &str = "127.0.0.1:12345";
-
 fn main() {
+    // Read the configuration file to get a list of nodes to connect to.
+    let config = configure::get();
+
+    // Then parse the arguments supplied to the client.
     let arguments = match Arguments::new() {
         Ok(arguments) => arguments,
         Err(why) => {
@@ -22,39 +32,36 @@ fn main() {
         }
     };
 
-    eprintln!("[INFO] parsing IP address");
-    let mut connection = match Connection::new(LOCALHOST) {
-        Ok(connection) => connection,
+    // Collect a vector of nodes that we will send inputs to, and initialize them with a command.
+    let nodes = match nodes::get(&config.nodes, arguments.get_command()) {
+        Ok(nodes) => nodes,
         Err(why) => {
-            eprintln!("[CRITICAL] {}", why);
+            eprintln!("concurr [CRITICAL]: connection error: {}", why);
             exit(1);
         }
     };
 
-    eprintln!("[INFO] found {} cores on {:?}", connection.cores, connection.address);
-    eprintln!("[INFO] sending '{}' to {:?}", arguments.get_command(), connection.address);
-    let command_id = match connection.send_command(arguments.get_command()) {
-        Ok(command_id) => command_id,
-        Err(why) => {
-            eprintln!("[CRITICAL] {}", why);
-            exit(1);
-        }
-    };
-
+    // Input and output queues that will be concurrently accessed across threads.
     let inputs = Arc::new(Mutex::new(VecDeque::new()));
     let outputs = Arc::new(Mutex::new(BTreeMap::new()));
 
-    for _ in 0..connection.cores {
-        let inputs = inputs.clone();
-        let outputs = outputs.clone();
-        let address = connection.address;
-        thread::spawn(move || slot::spawn(inputs, outputs, address, command_id));
+    // Spawn slots for submitting inputs to each connected node.
+    for node in &nodes {
+        for _ in 0..node.cores {
+            let inputs = inputs.clone();
+            let outputs = outputs.clone();
+            let address = node.address;
+            let id = node.command;
+            thread::spawn(move || slot::spawn(inputs, outputs, address, id));
+        }
     }
 
+    // This branch will generate permutations of the inputs to use as inputs.
     if arguments.args.len() != 1 {
         unimplemented!()
     }
 
+    // Useful for signaling the total number of inputs that are to be expected.
     let total_inputs = Arc::new(AtomicUsize::new(0));
     let inputs_finished = Arc::new(AtomicBool::new(false));
 
@@ -76,20 +83,31 @@ fn main() {
         });
     }
 
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+
     let mut counter = 0;
+
     while !(inputs_finished.load(Ordering::Relaxed) &&
         counter == total_inputs.load(Ordering::Relaxed))
     {
         thread::sleep(Duration::from_millis(1));
         let mut outputs = outputs.lock().unwrap();
-        let (status, stdout, stderr) = match outputs.remove(&counter) {
+        let (status, out, err) = match outputs.remove(&counter) {
             Some(output) => {
                 drop(outputs);
                 output
             }
             None => continue,
         };
-        eprintln!("Job: {}; Status: {}\nSTDOUT: {}\nSTDERR: {}", counter, status, stdout, stderr);
+        let _ = write!(
+            stdout,
+            "Job: {}; Status: {}\nSTDOUT: {}\nSTDERR: {}",
+            counter,
+            status,
+            out,
+            err
+        );
         counter += 1;
     }
 }

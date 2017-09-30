@@ -11,12 +11,12 @@ mod command;
 mod jobs;
 mod service;
 
-use service::{Concurr, ConcurrProto};
-use std::sync::{Arc, RwLock};
-use tokio_proto::TcpServer;
 use libc::*;
+use service::{Concurr, ConcurrProto};
 use std::mem;
 use std::ptr;
+use std::sync::{Arc, RwLock};
+use tokio_proto::TcpServer;
 
 fn main() {
     unsafe {
@@ -30,8 +30,9 @@ fn main() {
         sigprocmask(SIG_BLOCK, &sigset as *const sigset_t, ptr::null_mut() as *mut sigset_t);
     }
     let cmds = Arc::new(RwLock::new(Vec::new()));
-    let addr = "0.0.0.0:12345".parse().unwrap();
+    let addr = "0.0.0.0:31514".parse().unwrap();
     let mut server = TcpServer::new(ConcurrProto, addr);
-    server.threads(num_cpus::get() * 2);
+    let ncores = num_cpus::get();
+    server.threads(ncores + (ncores / 2));
     server.serve(move || Ok(Concurr::new(cmds.clone())));
 }

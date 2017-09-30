@@ -1,16 +1,11 @@
 use std::fmt::{self, Display, Formatter};
 use std::io::{self, BufRead, BufReader, Write};
-use std::net::{AddrParseError, SocketAddr, TcpStream};
+use std::net::{SocketAddr, TcpStream};
 use std::str;
 
 #[derive(Debug)]
 pub enum ConnectionError {
-    Parse(AddrParseError),
     IO(io::Error),
-}
-
-impl From<AddrParseError> for ConnectionError {
-    fn from(addr: AddrParseError) -> ConnectionError { ConnectionError::Parse(addr) }
 }
 
 impl From<io::Error> for ConnectionError {
@@ -20,7 +15,6 @@ impl From<io::Error> for ConnectionError {
 impl Display for ConnectionError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match *self {
-            ConnectionError::Parse(ref err) => write!(f, "parsing error: {}", err),
             ConnectionError::IO(ref err) => write!(f, "I/O error: {}", err),
         }
     }
@@ -42,7 +36,7 @@ impl Drop for Connection {
 }
 
 impl Connection {
-    pub fn new(addr: &str) -> Result<Connection, ConnectionError> {
+    pub fn new(address: SocketAddr) -> Result<Connection, ConnectionError> {
         fn get_cores(addr: SocketAddr) -> io::Result<usize> {
             let mut stream = TcpStream::connect(addr)?;
             stream.write_all(b"get cores\r\n")?;
@@ -53,7 +47,6 @@ impl Connection {
                 .map_err(|_| io::Error::new(io::ErrorKind::Other, "ID is NaN"))
         }
 
-        let address = addr.parse()?;
         Ok(Connection {
             address,
             command: 0,

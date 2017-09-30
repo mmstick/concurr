@@ -38,7 +38,6 @@ impl Concurr {
 }
 
 impl Service for Concurr {
-    // These types must match the corresponding protocol types:
     type Request = JobEvent;
     type Response = ResponseEvent;
 
@@ -52,13 +51,22 @@ impl Service for Concurr {
     fn call(&self, req: Self::Request) -> Self::Future {
         let event = match req {
             JobEvent::Command(cmd) => {
+                // Contains the tokenized expression of the command that will be shared
+                // with each slot attached to the command.
                 let command = PreparedCommand::new(&cmd);
-                let inputs = Arc::new(Mutex::new(VecDeque::new()));
-                let outputs = Arc::new(Mutex::new(BTreeMap::new()));
-                let kill = Arc::new(AtomicBool::new(false));
-                let parked = Arc::new(AtomicUsize::new(0));
-                let slots = num_cpus::get();
 
+                // This will store the inputs that each slot will concurrently grab inputs from.
+                let inputs = Arc::new(Mutex::new(VecDeque::new()));
+                // While this will store the results of each complete job.
+                let outputs = Arc::new(Mutex::new(BTreeMap::new()));
+                // This will be used to notify threads that it's time to stop.
+                let kill = Arc::new(AtomicBool::new(false));
+                // And this will be used to determine when all threads have stopped.
+                let parked = Arc::new(AtomicUsize::new(0));
+
+                // We shall create as many slots as there are cores in the system.
+                let slots = num_cpus::get();
+                // Spawn all of the slots that will concurrently process inputs.
                 for slot in 0..slots {
                     let inputs = inputs.clone();
                     let outputs = outputs.clone();
@@ -70,9 +78,11 @@ impl Service for Concurr {
                     );
                 }
 
+                // Store the command in the command pool, and obtain the ID of the command.
                 let mut id = 0;
                 let mut commands = self.commands.write().unwrap();
                 for cmd in commands.iter_mut() {
+                    // If an element is `None`, we will take that position.
                     if cmd.is_none() {
                         *cmd = Some(Job {
                             slots,
@@ -82,11 +92,15 @@ impl Service for Concurr {
                             kill,
                             parked,
                         });
+
+                        // The ID is the index where we just stored the command.
                         return Box::new(future::ok(ResponseEvent::Info(id.to_string())));
                     }
                     id += 1;
                 }
 
+                // If this is reached, it's because there was no `None` entry. Therefore,
+                // the command will be pushed to the end of the command queue.
                 commands.push(Some(Job {
                     slots,
                     command,
@@ -95,56 +109,50 @@ impl Service for Concurr {
                     kill,
                     parked,
                 }));
+
+                // And the indice where the command is stored is the ID to return.
                 ResponseEvent::Info(id.to_string())
             }
             JobEvent::Input(cid, jid, input) => {
-                {
-                    let commands = self.commands.read().unwrap();
-                    match commands.get(cid) {
-                        Some(&Some(ref unit)) => {
-                            let mut inputs = unit.inputs.lock().unwrap();
-                            inputs.push_back((jid, input.clone()));
-                            drop(inputs);
+                let commands = self.commands.read().unwrap();
+                match commands.get(cid) {
+                    Some(&Some(ref unit)) => {
+                        let mut inputs = unit.inputs.lock().unwrap();
+                        inputs.push_back((jid, input.clone()));
+                        drop(inputs);
 
-                            let result = loop {
-                                thread::sleep(Duration::from_millis(1));
-                                if let Ok(ref mut outputs) = unit.outputs.try_lock() {
-                                    if let Some(result) = outputs.remove(&jid) {
-                                        break result;
-                                    }
-                                }
-                            };
-
-                            match result {
-                                Some((status, stdout, stderr)) => {
-                                    let mut stdout = unsafe { File::from_raw_fd(stdout) };
-                                    let mut stderr = unsafe { File::from_raw_fd(stderr) };
-                                    let mut outbuf = String::new();
-                                    let mut errbuf = String::new();
-                                    let _ = stdout.read_to_string(&mut outbuf);
-                                    let _ = stderr.read_to_string(&mut errbuf);
-                                    return Box::new(future::ok(
-                                        ResponseEvent::Output(jid, status, outbuf, errbuf),
-                                    ));
-                                }
-                                None => {
-                                    eprintln!(
-                                        "[CRITICAL] job {} errored with a critical issue",
-                                        cid
-                                    );
+                        let result = loop {
+                            thread::sleep(Duration::from_millis(1));
+                            if let Ok(ref mut outputs) = unit.outputs.try_lock() {
+                                if let Some(result) = outputs.remove(&jid) {
+                                    break result;
                                 }
                             }
+                        };
+
+                        match result {
+                            Some((status, stdout, stderr)) => {
+                                let mut stdout = unsafe { File::from_raw_fd(stdout) };
+                                let mut stderr = unsafe { File::from_raw_fd(stderr) };
+                                let mut outbuf = String::new();
+                                let mut errbuf = String::new();
+                                let _ = stdout.read_to_string(&mut outbuf);
+                                let _ = stderr.read_to_string(&mut errbuf);
+                                return Box::new(
+                                    future::ok(ResponseEvent::Output(jid, status, outbuf, errbuf)),
+                                );
+                            }
+                            None => {
+                                eprintln!("[CRITICAL] job {} errored with a critical issue", cid);
+                            }
                         }
-                        _ => eprintln!("[WARN] command ID {} not found", cid),
                     }
+                    _ => eprintln!("[WARN] command ID {} not found", cid),
                 }
 
-                ResponseEvent::Finished(jid, input)
+                ResponseEvent::Error(jid, input)
             }
-            JobEvent::GetCores => {
-                eprintln!("[INFO] received GetCores request");
-                ResponseEvent::Info(num_cpus::get().to_string())
-            }
+            JobEvent::GetCores => ResponseEvent::Info(num_cpus::get().to_string()),
             JobEvent::GetCommands => {
                 let commands = self.commands.read().unwrap();
                 let mut output;

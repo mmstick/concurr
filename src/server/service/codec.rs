@@ -19,11 +19,17 @@ impl Decoder for ConcurrCodec {
             if argument.len() < 5 {
                 Err(io::Error::new(io::ErrorKind::Other, "invalid call"))
             } else {
+                // Match the corresponding instruction to it's event.
                 match &argument[..3] {
+                    // Signals to create a command.
                     b"com" => JobEvent::get_command(&argument[4..]),
+                    // Signals to process an input.
                     b"inp" => JobEvent::get_input(&argument[4..]),
+                    // Signals to obtain some information about the server.
                     b"get" => JobEvent::get_option(&argument[4..]),
+                    // Signals to remove a job from the command pool.
                     b"del" => JobEvent::del_command(&argument[4..]),
+                    // The client has sent an invalid instruction.
                     _ => Err(io::Error::new(io::ErrorKind::Other, "invalid instruction")),
                 }
             }
