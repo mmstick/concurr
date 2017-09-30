@@ -7,6 +7,7 @@ use std::os::unix::io::RawFd;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
+#[derive(Clone)]
 pub struct Job {
     pub slots:   usize,
     pub command: PreparedCommand,

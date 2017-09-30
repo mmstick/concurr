@@ -34,6 +34,7 @@ pub fn slot_event(
         thread::sleep(Duration::from_millis(1));
         let mut lock = inputs.lock().unwrap();
         if let Some((jid, input)) = lock.pop_front() {
+            drop(lock);
             for token in &command.tokens {
                 match *token {
                     Token::Placeholder => buffer.push_str(&input),
@@ -56,6 +57,7 @@ pub fn slot_event(
                 -1 => eprintln!("[CRITICAL] could not execute fork"),
                 0 => {
                     unsafe {
+                        let _ = libc::setpgid(0, 0);
                         let _ = libc::dup2(stdout_fds[1], STDOUT_FILENO);
                         let _ = libc::dup2(stderr_fds[1], STDERR_FILENO);
                         let _ = libc::close(stdout_fds[0]);

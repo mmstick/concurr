@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, BufRead, BufReader, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{SocketAddr, TcpStream, Shutdown};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -13,7 +13,6 @@ pub fn spawn(
 ) -> io::Result<()> {
     loop {
         thread::sleep(Duration::from_millis(1));
-        let mut stream = TcpStream::connect(address)?;
         let mut inputs = inputs.lock().unwrap();
         let (jid, input) = match inputs.pop_front() {
             Some(input) => {
@@ -24,7 +23,9 @@ pub fn spawn(
         };
 
         eprintln!("[INFO] sending {}", input);
+        let mut stream = TcpStream::connect(address)?;
         stream.write_all(format!("inp {} {} {}\r\n", id, jid, input).as_bytes())?;
+        stream.shutdown(Shutdown::Write)?;
 
         let mut lines = BufReader::new(stream).lines();
         if let Some(status) = lines.next() {

@@ -15,7 +15,7 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::os::unix::io::FromRawFd;
 use std::str;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
@@ -27,7 +27,7 @@ fn obtain(input: &[u8]) -> io::Result<String> {
         .map_err(|_| io::Error::new(io::ErrorKind::Other, "invalid UTF-8"))
 }
 
-type Jobs = Arc<Mutex<Vec<Option<Job>>>>;
+type Jobs = Arc<RwLock<Vec<Option<Job>>>>;
 
 pub struct Concurr {
     commands: Jobs,
@@ -71,7 +71,7 @@ impl Service for Concurr {
                 }
 
                 let mut id = 0;
-                let mut commands = self.commands.lock().unwrap();
+                let mut commands = self.commands.write().unwrap();
                 for cmd in commands.iter_mut() {
                     if cmd.is_none() {
                         *cmd = Some(Job {
@@ -99,7 +99,7 @@ impl Service for Concurr {
             }
             JobEvent::Input(cid, jid, input) => {
                 {
-                    let commands = self.commands.lock().unwrap();
+                    let commands = self.commands.read().unwrap();
                     match commands.get(cid) {
                         Some(&Some(ref unit)) => {
                             let mut inputs = unit.inputs.lock().unwrap();
@@ -146,7 +146,7 @@ impl Service for Concurr {
                 ResponseEvent::Info(num_cpus::get().to_string())
             }
             JobEvent::GetCommands => {
-                let commands = self.commands.lock().unwrap();
+                let commands = self.commands.read().unwrap();
                 let mut output;
                 let mut commands = commands.iter().enumerate();
 
@@ -174,7 +174,7 @@ impl Service for Concurr {
                 ResponseEvent::Info(output)
             }
             JobEvent::StopJob(id) => {
-                let mut commands = self.commands.lock().unwrap();
+                let mut commands = self.commands.write().unwrap();
                 // Obtain the corresponding job from the given ID.
                 if let Some(command) = commands.get_mut(id) {
                     // We shall signal the threads to quite, and then set this command to None.

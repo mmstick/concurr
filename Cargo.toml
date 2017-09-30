@@ -18,7 +18,7 @@ path = "src/server/main.rs"
 [dependencies]
 bytes = "0.4"
 futures = "0.1"
-ion-shell = { git = "https://github.com/redox-os/ion/" }
+ion-shell = { git = "https://github.com/redox-os/ion" }
 libc = "0.2"
 num_cpus = "1.0"
 tokio-core = "0.1"
