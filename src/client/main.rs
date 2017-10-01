@@ -13,12 +13,13 @@ mod slot;
 
 use args::{ArgUnit, Arguments};
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{self, Write};
+use std::io::{self, Write, BufRead, BufReader};
 use std::process::exit;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
+use std::fs::File;
 
 fn main() {
     // Read the configuration file to get a list of nodes to connect to.
@@ -74,15 +75,42 @@ fn main() {
         thread::spawn(move || match arguments.args[0] {
             ArgUnit::Strings(ref vec) => {
                 let mut ninputs = 0;
-                for (jid, ref input) in vec.iter().enumerate() {
+                for ref input in vec.iter() {
                     let mut inputs = inputs.lock().unwrap();
-                    inputs.push_back((jid, String::from(input.as_str())));
+                    inputs.push_back((ninputs, String::from(input.as_str())));
                     ninputs += 1;
                 }
                 total_inputs.store(ninputs, Ordering::SeqCst);
                 inputs_finished.store(true, Ordering::SeqCst);
             }
-            ArgUnit::Files(_) => unimplemented!(),
+            ArgUnit::Files(ref vec) => {
+                let mut ninputs = 0;
+                for path in vec.iter() {
+                    let file = match File::open(path.as_str()) {
+                        Ok(file) => file,
+                        Err(why) => {
+                            eprintln!("concurr [CRITICAL]: unable to read inputs from '{}': {}", path, why);
+                            continue
+                        }
+                    };
+
+                    for line in BufReader::new(file).lines() {
+                        match line {
+                            Ok(input) => {
+                                let mut inputs = inputs.lock().unwrap();
+                                inputs.push_back((ninputs, String::from(input.as_str())));
+                                ninputs += 1;
+                            },
+                            Err(why) => {
+                                eprintln!("concurr [CRITICAL]: unable to read line from '{}': {}", path, why);
+                                break
+                            }
+                        }
+                    }
+                }
+                total_inputs.store(ninputs, Ordering::SeqCst);
+                inputs_finished.store(true, Ordering::SeqCst);
+            },
         });
     }
 
