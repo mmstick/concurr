@@ -1,6 +1,7 @@
+use connection::{attempt_connection, attempt_write};
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{self, BufRead, BufReader, Write};
-use std::net::{Shutdown, SocketAddr, TcpStream};
+use std::io::{self, BufRead, BufReader};
+use std::net::{SocketAddr, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -23,30 +24,39 @@ pub fn spawn(
         };
 
         eprintln!("[INFO] sending {}", input);
-        let mut stream = TcpStream::connect(address)?;
-        stream.write_all(format!("inp {} {} {}\r\n", id, jid, input).as_bytes())?;
-        stream.shutdown(Shutdown::Write)?;
+        let instruction = format!("inp {} {} {}\r\n", id, jid, input);
+        let mut stream = attempt_connection(address)?;
+        stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+        attempt_write(&mut stream, instruction.as_bytes())?;
+        if !read_results(BufReader::new(&mut stream), &outputs)? {
+            return Err(io::Error::new(io::ErrorKind::Other, "invalid response"));
+        }
+    }
+}
 
-        let mut lines = BufReader::new(stream).lines();
-        if let Some(status) = lines.next() {
-            let status = status?;
-            let mut elements = status.split_whitespace();
-            let (id, status) = match (elements.next(), elements.next()) {
-                (Some(id), Some(status)) => (parse_usize(id)?, parse_u8(status)?),
-                _ => return Err(io::Error::new(io::ErrorKind::Other, "invalid status line")),
-            };
+fn read_results(
+    buffer: BufReader<&mut TcpStream>,
+    outputs: &Arc<Mutex<BTreeMap<usize, (u8, String, String)>>>,
+) -> io::Result<bool> {
+    let mut lines = buffer.lines();
+    if let Some(status) = lines.next() {
+        let status = status?;
+        let mut elements = status.split_whitespace();
+        let (id, status) = match (elements.next(), elements.next()) {
+            (Some(id), Some(status)) => (parse_usize(id)?, parse_u8(status)?),
+            _ => return Err(io::Error::new(io::ErrorKind::Other, "invalid status line")),
+        };
 
-            if let Some(stdout) = lines.next() {
-                if let Some(stderr) = lines.next() {
-                    let output = (status, unescape(&stdout?), unescape(&stderr?));
-                    let mut outputs = outputs.lock().unwrap();
-                    outputs.insert(id, output);
-                    continue;
-                }
+        if let Some(stdout) = lines.next() {
+            if let Some(stderr) = lines.next() {
+                let output = (status, unescape(&stdout?), unescape(&stderr?));
+                let mut outputs = outputs.lock().unwrap();
+                outputs.insert(id, output);
+                return Ok(true);
             }
         }
-        return Err(io::Error::new(io::ErrorKind::Other, "invalid response"));
     }
+    Ok(false)
 }
 
 fn parse_u8(input: &str) -> io::Result<u8> {

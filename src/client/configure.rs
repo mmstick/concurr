@@ -17,7 +17,6 @@ impl RawConfig {
     fn get_config(self) -> Result<Config, AddrParseError> {
         let mut nodes = Vec::new();
         for node in self.nodes {
-            eprintln!("{}", node);
             nodes.push(SocketAddr::from_str(&node)?);
         }
         Ok(Config {

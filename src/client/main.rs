@@ -1,4 +1,5 @@
 extern crate app_dirs;
+#[allow(unused_extern_crates)]
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
@@ -52,7 +53,9 @@ fn main() {
             let outputs = outputs.clone();
             let address = node.address;
             let id = node.command;
-            thread::spawn(move || slot::spawn(inputs, outputs, address, id));
+            thread::spawn(move || if let Err(why) = slot::spawn(inputs, outputs, address, id) {
+                eprintln!("concurr [CRITICAL]: slot error: {}", why);
+            });
         }
     }
 
@@ -88,6 +91,7 @@ fn main() {
 
     let mut counter = 0;
 
+    // Wait for inputs to be received, exiting the program once all inputs have been processed.
     while !(inputs_finished.load(Ordering::Relaxed) &&
         counter == total_inputs.load(Ordering::Relaxed))
     {
@@ -110,4 +114,8 @@ fn main() {
         );
         counter += 1;
     }
+
+    // Ensure that the nodes vector lives until the end of the program.
+    // This is because dropped nodes will delete their commands.
+    drop(nodes);
 }
