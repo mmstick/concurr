@@ -29,8 +29,8 @@ pub fn spawn(
                 Some(input) => input,
                 None => {
                     thread::sleep(Duration::from_millis(1));
-                    continue
-                },
+                    continue;
+                }
             }
         };
 
@@ -60,8 +60,8 @@ fn read_results(
         // Ensure that the status line contained valid UTF-8.
         let status = status?;
         // Find the space, as we are going to split the line at that space.
-        let pos = status.find(' ')
-            .ok_or(io::Error::new(io::ErrorKind::Other, "invalid status line"))?;
+        let pos =
+            status.find(' ').ok_or(io::Error::new(io::ErrorKind::Other, "invalid status line"))?;
         // Split the status line in two, as there should be a whitespace to separate the results.
         let (id, status) = status.split_at(pos);
         // Then attempt to parse each value as their corresponding integer types.

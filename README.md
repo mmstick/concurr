@@ -9,11 +9,27 @@ uses Tokio to perform asynchronous network I/O, and executes generated commands 
 instances of the Ion Shell. The client works similarly to GNU Parallel, but there are key
 differences for the sake of simplicity in operation.
 
-> Only the server is implemented at this time. The client is about to be developed, and should be
-> submitted shortly. Additionally, encryption is not yet supported, and therefore this shouldn't
-> be utilized for sensitive information until support is added.
+## The Client
 
-## How The Server Works
+The client is responsible for parsing arguments, connecting to nodes and obtaining slot counts,
+submitting a command to each node, distributing inputs to each slot on each connected node,
+collecting responses from those slots when they complete, and requesting new inputs from a shared
+buffer. Simple stuff. Syntax is to be very similar to GNU Parallel, but there are some differences.
+
+### Example
+
+```sh
+concurr 'echo job {#} on slot {%}: {}' : arg1 arg2 arg3 arg4
+concurr 'echo job {#} on slot {%}: {}' :: file1 file2 file3
+concurr 'echo {}' < input_file
+cat file | concurr 'echo {}'
+```
+
+### How The Client Works
+
+## The Server
+
+### How The Server Works
 
 The service works by listening for a number of possible instructions that can be supplied. A
 command instruction will tell the server to create a new command with a pool of threads that will

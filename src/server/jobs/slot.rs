@@ -54,19 +54,23 @@ pub fn slot_event(
             }
 
             match unsafe { libc::fork() } {
-                -1 => eprintln!("[CRITICAL] could not execute fork"),
-                0 => {
-                    unsafe {
-                        let _ = libc::setpgid(0, 0);
-                        let _ = libc::dup2(stdout_fds[1], STDOUT_FILENO);
-                        let _ = libc::dup2(stderr_fds[1], STDERR_FILENO);
-                        let _ = libc::close(stdout_fds[0]);
-                        let _ = libc::close(stderr_fds[0]);
-                        let _ = libc::close(stdout_fds[1]);
-                        let _ = libc::close(stderr_fds[1]);
-                    }
+                -1 => unsafe {
+                    let _ = libc::close(stdout_fds[0]);
+                    let _ = libc::close(stderr_fds[0]);
+                    let _ = libc::close(stdout_fds[1]);
+                    let _ = libc::close(stderr_fds[1]);
+                    eprintln!("[CRITICAL] could not execute fork");
+                },
+                0 => unsafe {
+                    let _ = libc::setpgid(0, 0);
+                    let _ = libc::dup2(stdout_fds[1], STDOUT_FILENO);
+                    let _ = libc::dup2(stderr_fds[1], STDERR_FILENO);
+                    let _ = libc::close(stdout_fds[0]);
+                    let _ = libc::close(stderr_fds[0]);
+                    let _ = libc::close(stdout_fds[1]);
+                    let _ = libc::close(stderr_fds[1]);
                     exit(shell.execute_command(&buffer));
-                }
+                },
                 pid @ _ => {
                     unsafe {
                         let _ = libc::close(stdout_fds[1]);

@@ -8,18 +8,20 @@ extern crate toml;
 mod args;
 mod configure;
 mod connection;
+mod inputs;
 mod nodes;
+mod redirection;
 mod slot;
 
-use args::{ArgUnit, Arguments};
+use args::{ArgUnit, ArgsSource, Arguments};
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{self, Write, BufRead, BufReader};
+use std::io::{self, Write};
+use std::path::Path;
 use std::process::exit;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::fs::File;
 
 fn main() {
     // Read the configuration file to get a list of nodes to connect to.
@@ -60,59 +62,61 @@ fn main() {
         }
     }
 
-    // This branch will generate permutations of the inputs to use as inputs.
-    if arguments.args.len() != 1 {
-        unimplemented!()
-    }
-
     // Useful for signaling the total number of inputs that are to be expected.
     let total_inputs = Arc::new(AtomicUsize::new(0));
     let inputs_finished = Arc::new(AtomicBool::new(false));
 
-    {
-        let total_inputs = total_inputs.clone();
-        let inputs_finished = inputs_finished.clone();
-        thread::spawn(move || match arguments.args[0] {
-            ArgUnit::Strings(ref vec) => {
-                let mut ninputs = 0;
-                for ref input in vec.iter() {
-                    let mut inputs = inputs.lock().unwrap();
-                    inputs.push_back((ninputs, String::from(input.as_str())));
-                    ninputs += 1;
-                }
-                total_inputs.store(ninputs, Ordering::SeqCst);
-                inputs_finished.store(true, Ordering::SeqCst);
+    // Pass arguments into the spawned threads, according to the type of arguments that are
+    // have been supplied, and where the arguments originate from.
+    match arguments.args {
+        ArgsSource::RedirFile(path) => {
+            let total_inputs = total_inputs.clone();
+            let inputs_finished = inputs_finished.clone();
+            let ninputs = &mut 0;
+            inputs::file(&inputs, &path, ninputs);
+            total_inputs.store(*ninputs, Ordering::SeqCst);
+            inputs_finished.store(true, Ordering::SeqCst);
+        }
+        ArgsSource::RedirPipe => {
+            let total_inputs = total_inputs.clone();
+            let inputs_finished = inputs_finished.clone();
+            let ninputs = &mut 0;
+            inputs::stdin(&inputs, ninputs);
+            total_inputs.store(*ninputs, Ordering::SeqCst);
+            inputs_finished.store(true, Ordering::SeqCst);
+            unimplemented!()
+        }
+        ArgsSource::Cli(args) => {
+            // This branch will generate permutations of the inputs to use as inputs.
+            if args.len() != 1 {
+                unimplemented!()
             }
-            ArgUnit::Files(ref vec) => {
-                let mut ninputs = 0;
-                for path in vec.iter() {
-                    let file = match File::open(path.as_str()) {
-                        Ok(file) => file,
-                        Err(why) => {
-                            eprintln!("concurr [CRITICAL]: unable to read inputs from '{}': {}", path, why);
-                            continue
-                        }
-                    };
 
-                    for line in BufReader::new(file).lines() {
-                        match line {
-                            Ok(input) => {
-                                let mut inputs = inputs.lock().unwrap();
-                                inputs.push_back((ninputs, String::from(input.as_str())));
-                                ninputs += 1;
-                            },
-                            Err(why) => {
-                                eprintln!("concurr [CRITICAL]: unable to read line from '{}': {}", path, why);
-                                break
-                            }
-                        }
+            let total_inputs = total_inputs.clone();
+            let inputs_finished = inputs_finished.clone();
+            thread::spawn(move || match args[0] {
+                ArgUnit::Strings(ref vec) => {
+                    let mut ninputs = 0;
+                    for ref input in vec.iter() {
+                        let mut inputs = inputs.lock().unwrap();
+                        inputs.push_back((ninputs, String::from(input.as_str())));
+                        ninputs += 1;
                     }
+                    total_inputs.store(ninputs, Ordering::SeqCst);
+                    inputs_finished.store(true, Ordering::SeqCst);
                 }
-                total_inputs.store(ninputs, Ordering::SeqCst);
-                inputs_finished.store(true, Ordering::SeqCst);
-            },
-        });
+                ArgUnit::Files(ref vec) => {
+                    let ninputs = &mut 0;
+                    for path in vec.iter() {
+                        inputs::file(&inputs, &Path::new(path), ninputs);
+                    }
+                    total_inputs.store(*ninputs, Ordering::SeqCst);
+                    inputs_finished.store(true, Ordering::SeqCst);
+                }
+            });
+        }
     }
+
 
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
@@ -120,8 +124,8 @@ fn main() {
     let mut counter = 0;
 
     // Wait for inputs to be received, exiting the program once all inputs have been processed.
-    while !(inputs_finished.load(Ordering::Relaxed) &&
-        counter == total_inputs.load(Ordering::Relaxed))
+    while !(inputs_finished.load(Ordering::Relaxed)
+        && counter == total_inputs.load(Ordering::Relaxed))
     {
         thread::sleep(Duration::from_millis(1));
 
