@@ -34,5 +34,6 @@ fn main() {
     let mut server = TcpServer::new(ConcurrProto, addr);
     let ncores = num_cpus::get();
     server.threads(ncores + (ncores / 2));
+    eprintln!("Launching service on '0.0.0.0:31514'.");
     server.serve(move || Ok(Concurr::new(cmds.clone())));
 }

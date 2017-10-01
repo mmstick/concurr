@@ -6,56 +6,78 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+/// Listen for inputs, pass the inputs along, and store the outputs, serially.
+///
+/// This function contains the event loop that will run on each spawned slot, on each node.
+/// All slots share access to the same `inputs` and `outputs` buffer. Inputs are popped from the
+/// `inputs` buffer, and their results are pushed onto the `outputs` buffer.
 pub fn spawn(
     inputs: Arc<Mutex<VecDeque<(usize, String)>>>,
     outputs: Arc<Mutex<BTreeMap<usize, (u8, String, String)>>>,
     address: SocketAddr,
     id: usize,
 ) -> io::Result<()> {
+    // Open a TCP stream to the node that will be used to submit inputs.
+    let mut stream = attempt_connection(address)?;
+    stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+
     loop {
-        thread::sleep(Duration::from_millis(1));
-        let mut inputs = inputs.lock().unwrap();
-        let (jid, input) = match inputs.pop_front() {
-            Some(input) => {
-                drop(inputs);
-                input
+        // Grab an input from the shared inputs buffer.
+        let (jid, input) = {
+            let mut inputs = inputs.lock().unwrap();
+            match inputs.pop_front() {
+                Some(input) => input,
+                None => {
+                    thread::sleep(Duration::from_millis(1));
+                    continue
+                },
             }
-            None => continue,
         };
 
-        eprintln!("[INFO] sending {}", input);
+        // Generate the instruction that will be submitted based on the received input.
         let instruction = format!("inp {} {} {}\r\n", id, jid, input);
-        let mut stream = attempt_connection(address)?;
-        stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+        // Pass the instruction to the server. Attempt 3 times before failing.
         attempt_write(&mut stream, instruction.as_bytes())?;
+        // Wait for and read the results that are returned, and place them onto the output
+        // buffer after parsing the results.
         if !read_results(BufReader::new(&mut stream), &outputs)? {
             return Err(io::Error::new(io::ErrorKind::Other, "invalid response"));
         }
     }
 }
 
+/// Results obtained from an input always consist of precisely three lines. The status line, which
+/// contains the job ID and exit status; and the stdout and stderr lines, which have their newlines
+/// escaped.
 fn read_results(
     buffer: BufReader<&mut TcpStream>,
     outputs: &Arc<Mutex<BTreeMap<usize, (u8, String, String)>>>,
 ) -> io::Result<bool> {
+    // Create a `Lines` iterator that will we will call exactly three times in the future.
     let mut lines = buffer.lines();
+    // The first line to read is the status line, containing the job ID and exit status.
     if let Some(status) = lines.next() {
+        // Ensure that the status line contained valid UTF-8.
         let status = status?;
-        let mut elements = status.split_whitespace();
-        let (id, status) = match (elements.next(), elements.next()) {
-            (Some(id), Some(status)) => (parse_usize(id)?, parse_u8(status)?),
-            _ => return Err(io::Error::new(io::ErrorKind::Other, "invalid status line")),
-        };
-
-        if let Some(stdout) = lines.next() {
-            if let Some(stderr) = lines.next() {
-                let output = (status, unescape(&stdout?), unescape(&stderr?));
-                let mut outputs = outputs.lock().unwrap();
-                outputs.insert(id, output);
-                return Ok(true);
-            }
+        // Find the space, as we are going to split the line at that space.
+        let pos = status.find(' ')
+            .ok_or(io::Error::new(io::ErrorKind::Other, "invalid status line"))?;
+        // Split the status line in two, as there should be a whitespace to separate the results.
+        let (id, status) = status.split_at(pos);
+        // Then attempt to parse each value as their corresponding integer types.
+        let (id, status) = (parse_usize(id)?, parse_u8(&status[1..])?);
+        // Now obtain the stdout line, followed by the stderr line.
+        if let (Some(stdout), Some(stderr)) = (lines.next(), lines.next()) {
+            // Escape the stdout and stderr values, and push them onto the outputs buffer.
+            let output = (status, unescape(&stdout?), unescape(&stderr?));
+            let mut outputs = outputs.lock().unwrap();
+            outputs.insert(id, output);
+            // True indicates that we successfully placed a value.
+            return Ok(true);
         }
     }
+
+    // False indicates that there was an issue with the results.
     Ok(false)
 }
 

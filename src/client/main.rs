@@ -88,7 +88,7 @@ fn main() {
 
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
-
+    let mut results = Vec::new();
     let mut counter = 0;
 
     // Wait for inputs to be received, exiting the program once all inputs have been processed.
@@ -96,23 +96,27 @@ fn main() {
         counter == total_inputs.load(Ordering::Relaxed))
     {
         thread::sleep(Duration::from_millis(1));
-        let mut outputs = outputs.lock().unwrap();
-        let (status, out, err) = match outputs.remove(&counter) {
-            Some(output) => {
-                drop(outputs);
-                output
+
+        {
+            let mut counter = counter;
+            let mut outputs = outputs.lock().unwrap();
+            while let Some(output) = outputs.remove(&counter) {
+                results.push(output);
+                counter += 1;
             }
-            None => continue,
-        };
-        let _ = write!(
-            stdout,
-            "Job: {}; Status: {}\nSTDOUT: {}\nSTDERR: {}",
-            counter,
-            status,
-            out,
-            err
-        );
-        counter += 1;
+        }
+
+        for (status, out, err) in results.drain(..) {
+            let _ = writeln!(
+                stdout,
+                "Job: {}; Status: {}\nSTDOUT: {}\nSTDERR: {}",
+                counter,
+                status,
+                out,
+                err
+            );
+            counter += 1;
+        }
     }
 
     // Ensure that the nodes vector lives until the end of the program.

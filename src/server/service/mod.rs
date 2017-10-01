@@ -138,6 +138,8 @@ impl Service for Concurr {
                                 let mut errbuf = String::new();
                                 let _ = stdout.read_to_string(&mut outbuf);
                                 let _ = stderr.read_to_string(&mut errbuf);
+                                drop(stdout);
+                                drop(stderr);
                                 return Box::new(
                                     future::ok(ResponseEvent::Output(jid, status, outbuf, errbuf)),
                                 );
