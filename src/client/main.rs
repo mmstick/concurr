@@ -72,19 +72,23 @@ fn main() {
         ArgsSource::RedirFile(path) => {
             let total_inputs = total_inputs.clone();
             let inputs_finished = inputs_finished.clone();
-            let ninputs = &mut 0;
-            inputs::file(&inputs, &path, ninputs);
-            total_inputs.store(*ninputs, Ordering::SeqCst);
-            inputs_finished.store(true, Ordering::SeqCst);
+            thread::spawn(move || {
+                let inputs_finished = inputs_finished.clone();
+                let ninputs = &mut 0;
+                inputs::file(&inputs, &path, ninputs);
+                total_inputs.store(*ninputs, Ordering::SeqCst);
+                inputs_finished.store(true, Ordering::SeqCst);
+            });
         }
         ArgsSource::RedirPipe => {
             let total_inputs = total_inputs.clone();
             let inputs_finished = inputs_finished.clone();
-            let ninputs = &mut 0;
-            inputs::stdin(&inputs, ninputs);
-            total_inputs.store(*ninputs, Ordering::SeqCst);
-            inputs_finished.store(true, Ordering::SeqCst);
-            unimplemented!()
+            thread::spawn(move || {
+                let ninputs = &mut 0;
+                inputs::stdin(&inputs, ninputs);
+                total_inputs.store(*ninputs, Ordering::SeqCst);
+                inputs_finished.store(true, Ordering::SeqCst);
+            });
         }
         ArgsSource::Cli(args) => {
             // This branch will generate permutations of the inputs to use as inputs.
