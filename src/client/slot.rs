@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, BufRead, BufReader};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -16,32 +17,57 @@ pub fn spawn(
     outputs: Arc<Mutex<BTreeMap<usize, (u8, String, String)>>>,
     address: SocketAddr,
     id: usize,
-) -> io::Result<()> {
-    // Open a TCP stream to the node that will be used to submit inputs.
-    let mut stream = attempt_connection(address)?;
-    stream.set_write_timeout(Some(Duration::from_secs(3)))?;
-
+    kill: Arc<AtomicBool>,
+    parked: Arc<AtomicUsize>
+) {
     loop {
-        // Grab an input from the shared inputs buffer.
-        let (jid, input) = {
-            let mut inputs = inputs.lock().unwrap();
-            match inputs.pop_front() {
-                Some(input) => input,
-                None => {
-                    thread::sleep(Duration::from_millis(1));
-                    continue;
-                }
+        // Open a TCP stream to the node that will be used to submit inputs.
+        let stream = &mut match attempt_connection(address) {
+            Ok(stream) => stream,
+            Err(why) => {
+                eprintln!("concurr [CRITICAL]: connection failed: {}", why);
+                thread::sleep(Duration::from_secs(1));
+                continue
             }
         };
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
+        // A cache for eliminating heap allocations within the slot.
+        let mut cache = ResultsCache::new();
 
-        // Generate the instruction that will be submitted based on the received input.
-        let instruction = format!("inp {} {} {}\r\n", id, jid, input);
-        // Pass the instruction to the server. Attempt 3 times before failing.
-        attempt_write(&mut stream, instruction.as_bytes())?;
-        // Wait for and read the results that are returned, and place them onto the output
-        // buffer after parsing the results.
-        if !read_results(BufReader::new(&mut stream), &outputs)? {
-            return Err(io::Error::new(io::ErrorKind::Other, "invalid response"));
+        loop {
+            if kill.load(Ordering::Relaxed) {
+                let _ = parked.fetch_add(1, Ordering::Relaxed);
+                return
+            }
+
+            // Grab an input from the shared inputs buffer.
+            let (jid, input) = {
+                let mut inputs = inputs.lock().unwrap();
+                match inputs.pop_front() {
+                    Some(input) => input,
+                    None => {
+                        thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
+                }
+            };
+
+            // Generate the instruction that will be submitted based on the received input,
+            // and then write that instruction into the TcpStream.
+            let result = cache.write_instruction(stream, id, jid, &input)
+                // Then wait for and return the results of the input, if possible.
+                .and_then(|_| read_results(BufReader::new(stream), &outputs, &mut cache));
+
+            // Clear the cache so that the next input will have a clean slate.
+            cache.clear();
+
+            // If an error occured, append it back to the input list for another slot to attempt.
+            if let Err(why) = result {
+                eprintln!("concurr [CRITICAL]: slot error: {}", why);
+                let mut inputs = inputs.lock().unwrap();
+                inputs.push_back((jid, input));
+                thread::sleep(Duration::from_secs(1));
+            }
         }
     }
 }
@@ -52,33 +78,93 @@ pub fn spawn(
 fn read_results(
     buffer: BufReader<&mut TcpStream>,
     outputs: &Arc<Mutex<BTreeMap<usize, (u8, String, String)>>>,
-) -> io::Result<bool> {
-    // Create a `Lines` iterator that will we will call exactly three times in the future.
-    let mut lines = buffer.lines();
-    // The first line to read is the status line, containing the job ID and exit status.
-    if let Some(status) = lines.next() {
-        // Ensure that the status line contained valid UTF-8.
-        let status = status?;
-        // Find the space, as we are going to split the line at that space.
-        let pos =
-            status.find(' ').ok_or(io::Error::new(io::ErrorKind::Other, "invalid status line"))?;
-        // Split the status line in two, as there should be a whitespace to separate the results.
-        let (id, status) = status.split_at(pos);
-        // Then attempt to parse each value as their corresponding integer types.
-        let (id, status) = (parse_usize(id)?, parse_u8(&status[1..])?);
-        // Now obtain the stdout line, followed by the stderr line.
-        if let (Some(stdout), Some(stderr)) = (lines.next(), lines.next()) {
-            // Escape the stdout and stderr values, and push them onto the outputs buffer.
-            let output = (status, unescape(&stdout?), unescape(&stderr?));
-            let mut outputs = outputs.lock().unwrap();
-            outputs.insert(id, output);
-            // True indicates that we successfully placed a value.
-            return Ok(true);
+    cache: &mut ResultsCache,
+) -> io::Result<()> {
+    // Read the results that were returned from the node.
+    cache.read_from(buffer)?;
+    // Attempt to parse the status line that was read.
+    let (id, status) = cache.parse_status()?;
+    // Escape the stdout and stderr values.
+    let output = (status, unescape(&cache.stdout), unescape(&cache.stderr));
+    // Push them onto the outputs buffer.
+    let mut outputs = outputs.lock().unwrap();
+    outputs.insert(id, output);
+    Ok(())
+}
+
+struct ResultsCache {
+    instruction: Vec<u8>,
+    status:      String,
+    stdout:      String,
+    stderr:      String,
+}
+
+impl ResultsCache {
+    pub fn new() -> ResultsCache {
+        ResultsCache {
+            instruction: Vec::new(),
+            status:      String::new(),
+            stdout:      String::new(),
+            stderr:      String::new(),
         }
     }
 
-    // False indicates that there was an issue with the results.
-    Ok(false)
+    pub fn read_from(&mut self, mut buffer: BufReader<&mut TcpStream>) -> io::Result<()> {
+        // The first line to read is the status line, containing the job ID and exit status.
+        let _ = buffer.read_line(&mut self.status)?;
+        // The second line contains the stdout stream.
+        let _ = buffer.read_line(&mut self.stdout)?;
+        // The third line contains the stderr stream.
+        let _ = buffer.read_line(&mut self.stderr)?;
+
+        // Remove the additional newlines that were also recorded.
+        let _ = self.status.pop();
+        let _ = self.stdout.pop();
+        let _ = self.stderr.pop();
+
+        Ok(())
+    }
+
+    pub fn write_instruction(
+        &mut self,
+        stream: &mut TcpStream,
+        cid: usize,
+        jid: usize,
+        input: &str,
+    ) -> io::Result<()> {
+        // Build the instruction
+        self.instruction.extend_from_slice(b"inp ");
+        self.instruction.extend_from_slice(&cid.to_string().as_bytes());
+        self.instruction.extend_from_slice(b" ");
+        self.instruction.extend_from_slice(&jid.to_string().as_bytes());
+        self.instruction.extend_from_slice(b" ");
+        self.instruction.extend_from_slice(input.as_bytes());
+        self.instruction.extend_from_slice(b"\r\n");
+
+        // Pass the instruction to the server. Attempt 3 times before failing.
+        attempt_write(stream, &self.instruction)?;
+
+        // Now clear the instruction
+        self.instruction.clear();
+        Ok(())
+    }
+
+    pub fn parse_status(&self) -> io::Result<(usize, u8)> {
+        // Find the space, as we are going to split the results of the status line.
+        let pos = self.status
+            .find(' ')
+            .ok_or(io::Error::new(io::ErrorKind::Other, "invalid status line"))?;
+        // Split the status line in two, as there should be a whitespace to separate the results.
+        let (id, status) = self.status.split_at(pos);
+        // Then attempt to parse each value as their corresponding integer types.
+        Ok((parse_usize(id)?, parse_u8(&status[1..])?))
+    }
+
+    pub fn clear(&mut self) {
+        self.status.clear();
+        self.stdout.clear();
+        self.stderr.clear();
+    }
 }
 
 fn parse_u8(input: &str) -> io::Result<u8> {

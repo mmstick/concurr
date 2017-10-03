@@ -21,7 +21,7 @@ use std::process::exit;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn main() {
     // Read the configuration file to get a list of nodes to connect to.
@@ -48,17 +48,19 @@ fn main() {
     // Input and output queues that will be concurrently accessed across threads.
     let inputs = Arc::new(Mutex::new(VecDeque::new()));
     let outputs = Arc::new(Mutex::new(BTreeMap::new()));
+    let kill = Arc::new(AtomicBool::new(false));
+    let parked = Arc::new(AtomicUsize::new(0));
 
     // Spawn slots for submitting inputs to each connected node.
     for node in &nodes {
         for _ in 0..node.cores {
-            let inputs = inputs.clone();
-            let outputs = outputs.clone();
             let address = node.address;
             let id = node.command;
-            thread::spawn(move || if let Err(why) = slot::spawn(inputs, outputs, address, id) {
-                eprintln!("concurr [CRITICAL]: slot error: {}", why);
-            });
+            let inputs = inputs.clone();
+            let outputs = outputs.clone();
+            let kill = kill.clone();
+            let parked = parked.clone();
+            thread::spawn(move || slot::spawn(inputs, outputs, address, id, kill, parked));
         }
     }
 
@@ -121,11 +123,11 @@ fn main() {
         }
     }
 
-
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
     let mut results = Vec::new();
     let mut counter = 0;
+    let start = Instant::now();
 
     // Wait for inputs to be received, exiting the program once all inputs have been processed.
     while !(inputs_finished.load(Ordering::Relaxed)
@@ -155,7 +157,19 @@ fn main() {
         }
     }
 
-    // Ensure that the nodes vector lives until the end of the program.
-    // This is because dropped nodes will delete their commands.
-    drop(nodes);
+    let time = Instant::now() - start;
+
+    eprintln!(
+        "concurr [INFO]: processed {} inputs within {}.{}s",
+        total_inputs.load(Ordering::Relaxed),
+        time.as_secs(),
+        time.subsec_nanos() / 1_000_000
+    );
+
+    // Stop the threads that are running in the background.
+    let spawned_threads = nodes.into_iter().map(|x| x.cores).sum();
+    kill.store(true, Ordering::Relaxed);
+    while parked.load(Ordering::Relaxed) != spawned_threads {
+        thread::sleep(Duration::from_millis(1));
+    }
 }
