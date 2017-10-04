@@ -1,4 +1,5 @@
 use app_dirs::*;
+use concurr::APP_INFO;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::net::{AddrParseError, SocketAddr};
@@ -8,8 +9,14 @@ use std::str::FromStr;
 use toml;
 
 #[derive(Deserialize)]
+struct Node {
+    address: String,
+    domain:  String,
+}
+
+#[derive(Deserialize)]
 struct RawConfig {
-    nodes:   Vec<String>,
+    nodes:   Vec<Node>,
     outputs: bool,
 }
 
@@ -17,7 +24,7 @@ impl RawConfig {
     fn get_config(self) -> Result<Config, AddrParseError> {
         let mut nodes = Vec::new();
         for node in self.nodes {
-            nodes.push(SocketAddr::from_str(&node)?);
+            nodes.push((SocketAddr::from_str(&node.address)?, node.domain));
         }
         Ok(Config {
             nodes,
@@ -27,19 +34,19 @@ impl RawConfig {
 }
 
 pub struct Config {
-    pub nodes:   Vec<SocketAddr>,
+    pub nodes:   Vec<(SocketAddr, String)>,
     pub outputs: bool,
 }
 
-const APP_INFO: AppInfo = AppInfo {
-    name:   "concurr",
-    author: "Michael Aaron Murphy",
-};
-
 const DEFAULT_CONFIG: &str = r#"
-# A list of nodes that the client will connect to
+# A list of nodes that the client will connect to.
+#
+# Each element is anonymous structure that contains two fields: address, and
+# domain. The address defines the location of the node from your client's
+# point of view, whereas the domain defines the name written in the server's
+# SSL certificate -- for security purposes.
 nodes = [
-    "127.0.0.1:31514"
+    { address = "127.0.0.1:31514", domain = "localhost" },
 ]
 
 # Whether the client should request the standard out / error of tasks.

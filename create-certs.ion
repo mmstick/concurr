@@ -1,0 +1,25 @@
+#!/usr/bin/env ion
+
+# Navigate to the corresponding directory
+mkdir -p $HOME/.config/concurr
+cd $HOME/.config/concurr
+
+# Create the PEM CRT and KEY files.
+openssl req -x509 -sha256 -nodes -days 365 \
+    -newkey rsa:2048 \
+    -keyout concurr.key \
+    -out concurr.crt
+
+# Convert that into a PKCS12 file
+openssl pkcs12 \
+    -inkey concurr.key \
+    -in concurr.crt \
+    -export -out server.pfx
+
+# Also create DER certificate for server authentication
+openssl x509 \
+    -in concurr.crt \
+    -outform der -out $(hostname).der
+
+# Remove the original PEM key
+rm concurr.{key,crt}

@@ -1,4 +1,6 @@
 extern crate app_dirs;
+extern crate concurr;
+extern crate native_tls;
 #[allow(unused_extern_crates)]
 extern crate serde;
 #[macro_use]
@@ -6,6 +8,7 @@ extern crate serde_derive;
 extern crate toml;
 
 mod args;
+mod certificate;
 mod configure;
 mod connection;
 mod inputs;
@@ -14,6 +17,7 @@ mod redirection;
 mod slot;
 
 use args::{ArgUnit, ArgsSource, Arguments};
+use slot::Slot;
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, Write};
 use std::path::Path;
@@ -37,7 +41,7 @@ fn main() {
     };
 
     // Collect a vector of nodes that we will send inputs to, and initialize them with a command.
-    let nodes = match nodes::get(&config.nodes, arguments.get_command()) {
+    let nodes = match nodes::get(config.nodes.into_iter(), arguments.get_command()) {
         Ok(nodes) => nodes,
         Err(why) => {
             eprintln!("concurr [CRITICAL]: connection error: {}", why);
@@ -53,6 +57,7 @@ fn main() {
 
     // Spawn slots for submitting inputs to each connected node.
     for node in &nodes {
+        let domain = Arc::new(node.domain.clone());
         for _ in 0..node.cores {
             let address = node.address;
             let id = node.command;
@@ -60,7 +65,10 @@ fn main() {
             let outputs = outputs.clone();
             let kill = kill.clone();
             let parked = parked.clone();
-            thread::spawn(move || slot::spawn(inputs, outputs, address, id, kill, parked));
+            let domain = domain.clone();
+            thread::spawn(
+                move || Slot::new(inputs, outputs, kill, parked, address, id, &domain).spawn(),
+            );
         }
     }
 

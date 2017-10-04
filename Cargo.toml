@@ -15,6 +15,9 @@ path = "src/client/main.rs"
 name = "concurr-jobsd"
 path = "src/server/main.rs"
 
+[lib]
+path = "src/shared/lib.rs"
+
 [dependencies]
 serde = "1.0"
 serde_derive = "1.0"
@@ -24,8 +27,10 @@ bytes = "0.4"
 futures = "0.1"
 ion-shell = { git = "https://github.com/redox-os/ion" }
 libc = "0.2"
+native-tls = "0.1"
 num_cpus = "1.0"
 tokio-core = "0.1"
 tokio-io = "0.1"
 tokio-proto = "0.1"
 tokio-service = "0.1"
+tokio-tls = { version = "0.1", features = ["tokio-proto"] }

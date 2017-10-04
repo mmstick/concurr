@@ -1,72 +1,105 @@
+use certificate;
 use connection::{attempt_connection, attempt_write};
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{self, BufRead, BufReader};
-use std::net::{SocketAddr, TcpStream};
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
-/// Listen for inputs, pass the inputs along, and store the outputs, serially.
-///
-/// This function contains the event loop that will run on each spawned slot, on each node.
-/// All slots share access to the same `inputs` and `outputs` buffer. Inputs are popped from the
-/// `inputs` buffer, and their results are pushed onto the `outputs` buffer.
-pub fn spawn(
-    inputs: Arc<Mutex<VecDeque<(usize, String)>>>,
+pub struct Slot<'a> {
+    inputs:  Arc<Mutex<VecDeque<(usize, String)>>>,
     outputs: Arc<Mutex<BTreeMap<usize, (u8, String, String)>>>,
+    kill:    Arc<AtomicBool>,
+    parked:  Arc<AtomicUsize>,
     address: SocketAddr,
-    id: usize,
-    kill: Arc<AtomicBool>,
-    parked: Arc<AtomicUsize>
-) {
-    loop {
-        // Open a TCP stream to the node that will be used to submit inputs.
-        let stream = &mut match attempt_connection(address) {
-            Ok(stream) => stream,
-            Err(why) => {
-                eprintln!("concurr [CRITICAL]: connection failed: {}", why);
-                thread::sleep(Duration::from_secs(1));
-                continue
-            }
-        };
-        let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
-        // A cache for eliminating heap allocations within the slot.
-        let mut cache = ResultsCache::new();
+    id:      usize,
+    domain:  &'a str,
+}
 
+impl<'a> Slot<'a> {
+    pub fn new(
+        inputs: Arc<Mutex<VecDeque<(usize, String)>>>,
+        outputs: Arc<Mutex<BTreeMap<usize, (u8, String, String)>>>,
+        kill: Arc<AtomicBool>,
+        parked: Arc<AtomicUsize>,
+        address: SocketAddr,
+        id: usize,
+        domain: &'a str,
+    ) -> Slot<'a> {
+        Slot {
+            inputs,
+            outputs,
+            address,
+            id,
+            kill,
+            parked,
+            domain,
+        }
+    }
+
+    /// Listen for inputs, pass the inputs along, and store the outputs, serially.
+    ///
+    /// This function contains the event loop that will run on each spawned slot, on each node.
+    /// All slots share access to the same `inputs` and `outputs` buffer. Inputs are popped
+    /// from the
+    /// `inputs` buffer, and their results are pushed onto the `outputs` buffer.
+    pub fn spawn(&self) {
         loop {
-            if kill.load(Ordering::Relaxed) {
-                let _ = parked.fetch_add(1, Ordering::Relaxed);
-                return
-            }
-
-            // Grab an input from the shared inputs buffer.
-            let (jid, input) = {
-                let mut inputs = inputs.lock().unwrap();
-                match inputs.pop_front() {
-                    Some(input) => input,
-                    None => {
-                        thread::sleep(Duration::from_millis(1));
-                        continue;
-                    }
+            // Open a TCP stream to the node that will be used to submit inputs.
+            let stream = &mut match attempt_connection(
+                self.address,
+                self.domain,
+                certificate::get(self.domain),
+            ) {
+                Ok(stream) => stream,
+                Err(why) => {
+                    eprintln!("concurr [CRITICAL]: connection failed: {}", why);
+                    thread::sleep(Duration::from_secs(1));
+                    continue;
                 }
             };
 
-            // Generate the instruction that will be submitted based on the received input,
-            // and then write that instruction into the TcpStream.
-            let result = cache.write_instruction(stream, id, jid, &input)
-                // Then wait for and return the results of the input, if possible.
-                .and_then(|_| read_results(BufReader::new(stream), &outputs, &mut cache));
+            // A cache for eliminating heap allocations within the slot.
+            let mut cache = ResultsCache::new();
 
-            // Clear the cache so that the next input will have a clean slate.
-            cache.clear();
+            loop {
+                if self.kill.load(Ordering::Relaxed) {
+                    let _ = self.parked.fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
 
-            // If an error occured, append it back to the input list for another slot to attempt.
-            if let Err(why) = result {
-                eprintln!("concurr [CRITICAL]: slot error: {}", why);
-                let mut inputs = inputs.lock().unwrap();
-                inputs.push_back((jid, input));
-                thread::sleep(Duration::from_secs(1));
+                // Grab an input from the shared inputs buffer.
+                let (jid, input) = {
+                    let mut inputs = self.inputs.lock().unwrap();
+                    match inputs.pop_front() {
+                        Some(input) => input,
+                        None => {
+                            thread::sleep(Duration::from_millis(1));
+                            continue;
+                        }
+                    }
+                };
+
+                // Generate the instruction that will be submitted based on the received input,
+                // and then write that instruction into the TcpStream.
+                let result = cache.write_instruction(stream, self.id, jid, &input)
+                    // Then wait for and return the results of the input, if possible.
+                    .and_then(|_| read_results(BufReader::new(stream), &self.outputs, &mut cache));
+
+                // Clear the cache so that the next input will have a clean slate.
+                cache.clear();
+
+                // If an error occured, append it back to the input list for another slot to
+                // attempt.
+                if let Err(why) = result {
+                    eprintln!("concurr [CRITICAL]: slot error: {}", why);
+                    let mut inputs = self.inputs.lock().unwrap();
+                    inputs.push_back((jid, input));
+                    drop(inputs);
+                    thread::sleep(Duration::from_secs(1));
+                }
             }
         }
     }
@@ -75,8 +108,8 @@ pub fn spawn(
 /// Results obtained from an input always consist of precisely three lines. The status line, which
 /// contains the job ID and exit status; and the stdout and stderr lines, which have their newlines
 /// escaped.
-fn read_results(
-    buffer: BufReader<&mut TcpStream>,
+fn read_results<STREAM: Read>(
+    buffer: BufReader<&mut STREAM>,
     outputs: &Arc<Mutex<BTreeMap<usize, (u8, String, String)>>>,
     cache: &mut ResultsCache,
 ) -> io::Result<()> {
@@ -109,7 +142,10 @@ impl ResultsCache {
         }
     }
 
-    pub fn read_from(&mut self, mut buffer: BufReader<&mut TcpStream>) -> io::Result<()> {
+    pub fn read_from<STREAM: Read>(
+        &mut self,
+        mut buffer: BufReader<&mut STREAM>,
+    ) -> io::Result<()> {
         // The first line to read is the status line, containing the job ID and exit status.
         let _ = buffer.read_line(&mut self.status)?;
         // The second line contains the stdout stream.
@@ -122,12 +158,15 @@ impl ResultsCache {
         let _ = self.stdout.pop();
         let _ = self.stderr.pop();
 
+        // DEBUG
+        eprintln!("DEBUG: {}\nDEBUG; {}\nDEBUG: {}", self.status, self.stdout, self.stderr);
+
         Ok(())
     }
 
-    pub fn write_instruction(
+    pub fn write_instruction<W: Write>(
         &mut self,
-        stream: &mut TcpStream,
+        stream: &mut W,
         cid: usize,
         jid: usize,
         input: &str,
@@ -135,9 +174,9 @@ impl ResultsCache {
         // Build the instruction
         self.instruction.extend_from_slice(b"inp ");
         self.instruction.extend_from_slice(&cid.to_string().as_bytes());
-        self.instruction.extend_from_slice(b" ");
+        self.instruction.push(b' ');
         self.instruction.extend_from_slice(&jid.to_string().as_bytes());
-        self.instruction.extend_from_slice(b" ");
+        self.instruction.push(b' ');
         self.instruction.extend_from_slice(input.as_bytes());
         self.instruction.extend_from_slice(b"\r\n");
 
