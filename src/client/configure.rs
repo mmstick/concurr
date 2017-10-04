@@ -4,9 +4,10 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::net::{AddrParseError, SocketAddr};
 use std::path::Path;
-use std::process::exit;
 use std::str::FromStr;
 use toml;
+use toml::de::Error as DecodeError;
+use std::fmt::{Formatter, Display, self};
 
 #[derive(Deserialize)]
 struct Node {
@@ -17,7 +18,8 @@ struct Node {
 #[derive(Deserialize)]
 struct RawConfig {
     nodes:   Vec<Node>,
-    outputs: bool,
+    outputs: Option<bool>,
+    verbose: Option<bool>,
 }
 
 impl RawConfig {
@@ -26,16 +28,29 @@ impl RawConfig {
         for node in self.nodes {
             nodes.push((SocketAddr::from_str(&node.address)?, node.domain));
         }
+        let mut flags = if self.outputs.unwrap_or(false) { OUTPUTS } else { 0 };
+        flags |= if self.verbose.unwrap_or(false) { VERBOSE } else { 0 };
         Ok(Config {
             nodes,
-            outputs: self.outputs,
+            flags,
         })
     }
 }
 
+pub const OUTPUTS: u8 = 1;
+pub const VERBOSE: u8 = 2;
+
 pub struct Config {
-    pub nodes:   Vec<(SocketAddr, String)>,
-    pub outputs: bool,
+    pub nodes: Vec<(SocketAddr, String)>,
+    pub flags: u8
+}
+
+impl Config {
+    pub fn get() -> Result<Config, ConfigError> {
+        let mut raw = String::new();
+        read_file(&get_app_dir(AppDataType::UserConfig, &APP_INFO, "config")?, &mut raw)?;
+        toml::from_str::<RawConfig>(&raw)?.get_config().map_err(Into::into)
+    }
 }
 
 const DEFAULT_CONFIG: &str = r#"
@@ -51,6 +66,8 @@ nodes = [
 
 # Whether the client should request the standard out / error of tasks.
 outputs = true
+# Whether additional information about jobs should be printed.
+verbose = false
 "#;
 
 fn read_file(path: &Path, buffer: &mut String) -> io::Result<()> {
@@ -64,30 +81,44 @@ fn read_file(path: &Path, buffer: &mut String) -> io::Result<()> {
     }
 }
 
-pub fn get() -> Config {
-    let mut raw = String::new();
-    match get_app_dir(AppDataType::UserConfig, &APP_INFO, "config") {
-        Ok(path) => if let Err(why) = read_file(&path, &mut raw) {
-            eprintln!("concurr [CRITICAL]: could not create/read config file: {}", why);
-            exit(1);
-        },
-        Err(why) => {
-            eprintln!("concurr [CRITICAL]: invalid configuration path: {}", why);
-            exit(1);
+pub enum ConfigError {
+    AppDir(AppDirsError),
+    Decode(DecodeError),
+    Address(AddrParseError),
+    File(io::Error)
+}
+
+impl Display for ConfigError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match *self {
+            ConfigError::AppDir(ref err) => write!(f, "XDG app dirs error: {}", err),
+            ConfigError::Decode(ref err) => write!(f, "TOML config decoding error: {}", err),
+            ConfigError::Address(ref err) => write!(f, "invalid address in config: {}", err),
+            ConfigError::File(ref err) => write!(f, "config I/O error: {}", err)
         }
     }
+}
 
-    match toml::from_str::<RawConfig>(&raw) {
-        Ok(config) => match config.get_config() {
-            Ok(config) => config,
-            Err(why) => {
-                eprintln!("concurr [CRITICAL]: {}", why);
-                exit(1);
-            }
-        },
-        Err(why) => {
-            eprintln!("concurr [CRITICAL]: could not parse config: {}", why);
-            exit(1);
-        }
+impl From<DecodeError> for ConfigError {
+    fn from(err: DecodeError) -> ConfigError {
+        ConfigError::Decode(err)
+    }
+}
+
+impl From<io::Error> for ConfigError {
+    fn from(err: io::Error) -> ConfigError {
+        ConfigError::File(err)
+    }
+}
+
+impl From<AddrParseError> for ConfigError {
+    fn from(err: AddrParseError) -> ConfigError {
+        ConfigError::Address(err)
+    }
+}
+
+impl From<AppDirsError> for ConfigError {
+    fn from(err: AppDirsError) -> ConfigError {
+        ConfigError::AppDir(err)
     }
 }

@@ -16,6 +16,7 @@ mod nodes;
 mod redirection;
 mod slot;
 
+use configure::Config;
 use args::{ArgUnit, ArgsSource, Arguments};
 use slot::Slot;
 use std::collections::{BTreeMap, VecDeque};
@@ -29,7 +30,13 @@ use std::time::{Duration, Instant};
 
 fn main() {
     // Read the configuration file to get a list of nodes to connect to.
-    let config = configure::get();
+    let config = match Config::get() {
+        Ok(config) => config,
+        Err(why) => {
+            eprintln!("concurr [CRITICAL]: {}", why);
+            exit(1);
+        }
+    };
 
     // Then parse the arguments supplied to the client.
     let arguments = match Arguments::new() {
@@ -57,6 +64,9 @@ fn main() {
 
     // Spawn slots for submitting inputs to each connected node.
     for node in &nodes {
+        if config.flags & configure::VERBOSE != 0 {
+            eprintln!("concurr [INFO]: found {} cores on {:?}", node.cores, node.address);
+        }
         let domain = Arc::new(node.domain.clone());
         for _ in 0..node.cores {
             let address = node.address;
@@ -153,26 +163,23 @@ fn main() {
         }
 
         for (status, out, err) in results.drain(..) {
-            let _ = writeln!(
-                stdout,
-                "Job: {}; Status: {}\nSTDOUT: {}\nSTDERR: {}",
-                counter,
-                status,
-                out,
-                err
-            );
+            eprintln!("concurr [INFO]: Job {}: Status: {}\nSTDERR: {}", counter, status, err);
+            let _ = stdout.write_all(out.as_bytes());
+            let _ = stdout.write(b"\n");
             counter += 1;
         }
     }
 
     let time = Instant::now() - start;
 
-    eprintln!(
-        "concurr [INFO]: processed {} inputs within {}.{}s",
-        total_inputs.load(Ordering::Relaxed),
-        time.as_secs(),
-        time.subsec_nanos() / 1_000_000
-    );
+    if config.flags & configure::VERBOSE != 0 {
+        eprintln!(
+            "concurr [INFO]: processed {} inputs within {}.{}s",
+            total_inputs.load(Ordering::Relaxed),
+            time.as_secs(),
+            time.subsec_nanos() / 1_000_000
+        );
+    }
 
     // Stop the threads that are running in the background.
     let spawned_threads = nodes.into_iter().map(|x| x.cores).sum();

@@ -86,7 +86,7 @@ impl<'a> Slot<'a> {
                 // and then write that instruction into the TcpStream.
                 let result = cache.write_instruction(stream, self.id, jid, &input)
                     // Then wait for and return the results of the input, if possible.
-                    .and_then(|_| read_results(BufReader::new(stream), &self.outputs, &mut cache));
+                    .and_then(|_| read_results(stream, &self.outputs, &mut cache));
 
                 // Clear the cache so that the next input will have a clean slate.
                 cache.clear();
@@ -109,10 +109,11 @@ impl<'a> Slot<'a> {
 /// contains the job ID and exit status; and the stdout and stderr lines, which have their newlines
 /// escaped.
 fn read_results<STREAM: Read>(
-    buffer: BufReader<&mut STREAM>,
+    stream: &mut STREAM,
     outputs: &Arc<Mutex<BTreeMap<usize, (u8, String, String)>>>,
     cache: &mut ResultsCache,
 ) -> io::Result<()> {
+    let buffer = BufReader::new(stream);
     // Read the results that were returned from the node.
     cache.read_from(buffer)?;
     // Attempt to parse the status line that was read.
@@ -157,9 +158,6 @@ impl ResultsCache {
         let _ = self.status.pop();
         let _ = self.stdout.pop();
         let _ = self.stderr.pop();
-
-        // DEBUG
-        eprintln!("DEBUG: {}\nDEBUG; {}\nDEBUG: {}", self.status, self.stdout, self.stderr);
 
         Ok(())
     }
