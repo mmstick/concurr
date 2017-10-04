@@ -1,5 +1,6 @@
 use app_dirs::*;
 use concurr::APP_INFO;
+use std::fmt::{self, Display, Formatter};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::net::{AddrParseError, SocketAddr};
@@ -7,7 +8,6 @@ use std::path::Path;
 use std::str::FromStr;
 use toml;
 use toml::de::Error as DecodeError;
-use std::fmt::{Formatter, Display, self};
 
 #[derive(Deserialize)]
 struct Node {
@@ -30,10 +30,7 @@ impl RawConfig {
         }
         let mut flags = if self.outputs.unwrap_or(false) { OUTPUTS } else { 0 };
         flags |= if self.verbose.unwrap_or(false) { VERBOSE } else { 0 };
-        Ok(Config {
-            nodes,
-            flags,
-        })
+        Ok(Config { nodes, flags })
     }
 }
 
@@ -42,7 +39,7 @@ pub const VERBOSE: u8 = 2;
 
 pub struct Config {
     pub nodes: Vec<(SocketAddr, String)>,
-    pub flags: u8
+    pub flags: u8,
 }
 
 impl Config {
@@ -85,7 +82,7 @@ pub enum ConfigError {
     AppDir(AppDirsError),
     Decode(DecodeError),
     Address(AddrParseError),
-    File(io::Error)
+    File(io::Error),
 }
 
 impl Display for ConfigError {
@@ -94,31 +91,23 @@ impl Display for ConfigError {
             ConfigError::AppDir(ref err) => write!(f, "XDG app dirs error: {}", err),
             ConfigError::Decode(ref err) => write!(f, "TOML config decoding error: {}", err),
             ConfigError::Address(ref err) => write!(f, "invalid address in config: {}", err),
-            ConfigError::File(ref err) => write!(f, "config I/O error: {}", err)
+            ConfigError::File(ref err) => write!(f, "config I/O error: {}", err),
         }
     }
 }
 
 impl From<DecodeError> for ConfigError {
-    fn from(err: DecodeError) -> ConfigError {
-        ConfigError::Decode(err)
-    }
+    fn from(err: DecodeError) -> ConfigError { ConfigError::Decode(err) }
 }
 
 impl From<io::Error> for ConfigError {
-    fn from(err: io::Error) -> ConfigError {
-        ConfigError::File(err)
-    }
+    fn from(err: io::Error) -> ConfigError { ConfigError::File(err) }
 }
 
 impl From<AddrParseError> for ConfigError {
-    fn from(err: AddrParseError) -> ConfigError {
-        ConfigError::Address(err)
-    }
+    fn from(err: AddrParseError) -> ConfigError { ConfigError::Address(err) }
 }
 
 impl From<AppDirsError> for ConfigError {
-    fn from(err: AppDirsError) -> ConfigError {
-        ConfigError::AppDir(err)
-    }
+    fn from(err: AppDirsError) -> ConfigError { ConfigError::AppDir(err) }
 }

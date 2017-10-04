@@ -11,6 +11,8 @@ use std::time::Duration;
 pub struct Slot<'a> {
     inputs:  Arc<Mutex<VecDeque<(usize, String)>>>,
     outputs: Arc<Mutex<BTreeMap<usize, (u8, String, String)>>>,
+    errors:  Arc<Mutex<VecDeque<(usize, String, u8)>>>,
+    failed:  Arc<Mutex<BTreeMap<usize, String>>>,
     kill:    Arc<AtomicBool>,
     parked:  Arc<AtomicUsize>,
     address: SocketAddr,
@@ -22,6 +24,8 @@ impl<'a> Slot<'a> {
     pub fn new(
         inputs: Arc<Mutex<VecDeque<(usize, String)>>>,
         outputs: Arc<Mutex<BTreeMap<usize, (u8, String, String)>>>,
+        errors: Arc<Mutex<VecDeque<(usize, String, u8)>>>,
+        failed: Arc<Mutex<BTreeMap<usize, String>>>,
         kill: Arc<AtomicBool>,
         parked: Arc<AtomicUsize>,
         address: SocketAddr,
@@ -31,6 +35,8 @@ impl<'a> Slot<'a> {
         Slot {
             inputs,
             outputs,
+            errors,
+            failed,
             address,
             id,
             kill,
@@ -71,13 +77,19 @@ impl<'a> Slot<'a> {
                 }
 
                 // Grab an input from the shared inputs buffer.
-                let (jid, input) = {
+                let (jid, input, tries) = {
                     let mut inputs = self.inputs.lock().unwrap();
                     match inputs.pop_front() {
-                        Some(input) => input,
+                        Some((jid, input)) => (jid, input, 0),
                         None => {
-                            thread::sleep(Duration::from_millis(1));
-                            continue;
+                            let mut errors = self.errors.lock().unwrap();
+                            match errors.pop_back() {
+                                Some(input) => input,
+                                None => {
+                                    thread::sleep(Duration::from_millis(1));
+                                    continue;
+                                }
+                            }
                         }
                     }
                 };
@@ -95,9 +107,13 @@ impl<'a> Slot<'a> {
                 // attempt.
                 if let Err(why) = result {
                     eprintln!("concurr [CRITICAL]: slot error: {}", why);
-                    let mut inputs = self.inputs.lock().unwrap();
-                    inputs.push_back((jid, input));
-                    drop(inputs);
+                    if tries == 3 {
+                        let mut failed = self.failed.lock().unwrap();
+                        failed.insert(jid, input);
+                    } else {
+                        let mut errors = self.errors.lock().unwrap();
+                        errors.push_back((jid, input, tries + 1));
+                    }
                     thread::sleep(Duration::from_secs(1));
                 }
             }

@@ -16,8 +16,8 @@ mod nodes;
 mod redirection;
 mod slot;
 
-use configure::Config;
 use args::{ArgUnit, ArgsSource, Arguments};
+use configure::Config;
 use slot::Slot;
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, Write};
@@ -27,6 +27,12 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
+
+pub enum Output {
+    Succeeded(String, String),
+    Errored(u8, String, String),
+    Failed(String),
+}
 
 fn main() {
     // Read the configuration file to get a list of nodes to connect to.
@@ -59,6 +65,8 @@ fn main() {
     // Input and output queues that will be concurrently accessed across threads.
     let inputs = Arc::new(Mutex::new(VecDeque::new()));
     let outputs = Arc::new(Mutex::new(BTreeMap::new()));
+    let errors = Arc::new(Mutex::new(VecDeque::new()));
+    let failed = Arc::new(Mutex::new(BTreeMap::new()));
     let kill = Arc::new(AtomicBool::new(false));
     let parked = Arc::new(AtomicUsize::new(0));
 
@@ -73,12 +81,15 @@ fn main() {
             let id = node.command;
             let inputs = inputs.clone();
             let outputs = outputs.clone();
+            let errors = errors.clone();
+            let failed = failed.clone();
             let kill = kill.clone();
             let parked = parked.clone();
             let domain = domain.clone();
-            thread::spawn(
-                move || Slot::new(inputs, outputs, kill, parked, address, id, &domain).spawn(),
-            );
+            thread::spawn(move || {
+                Slot::new(inputs, outputs, errors, failed, kill, parked, address, id, &domain)
+                    .spawn()
+            });
         }
     }
 
@@ -155,17 +166,58 @@ fn main() {
 
         {
             let mut counter = counter;
-            let mut outputs = outputs.lock().unwrap();
-            while let Some(output) = outputs.remove(&counter) {
-                results.push(output);
-                counter += 1;
+            loop {
+                let mut outputs = outputs.lock().unwrap();
+                if let Some((status, out, err)) = outputs.remove(&counter) {
+                    results.push(if status == 0 {
+                        Output::Succeeded(out, err)
+                    } else {
+                        Output::Errored(status, out, err)
+                    });
+                    counter += 1;
+                }
+                drop(outputs);
+
+                let mut failed = failed.lock().unwrap();
+                if let Some(output) = failed.remove(&counter) {
+                    results.push(Output::Failed(output));
+                    counter += 1;
+                }
+                drop(failed);
+
+                if !results.is_empty() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(1));
             }
         }
 
-        for (status, out, err) in results.drain(..) {
-            eprintln!("concurr [INFO]: Job {}: Status: {}\nSTDERR: {}", counter, status, err);
-            let _ = stdout.write_all(out.as_bytes());
-            let _ = stdout.write(b"\n");
+        for result in results.drain(..) {
+            if config.flags & configure::VERBOSE != 0 {
+                let _ = stdout.write_all(
+                    ["concurr [INFO] Job ", &counter.to_string(), "\n"].concat().as_bytes(),
+                );
+            }
+            match result {
+                Output::Succeeded(out, err) => {
+                    eprintln!("concurr [INFO]: Job {}: Status: 0\nSTDERR: {}", counter, err);
+                    let _ = stdout.write_all(out.as_bytes());
+                    let _ = stdout.write(b"\n");
+                }
+                Output::Errored(status, out, err) => {
+                    eprintln!(
+                        "concurr [WARN]: Job {}: Status: {}\nSTDERR: {}",
+                        counter,
+                        status,
+                        err
+                    );
+                    let _ = stdout.write_all(out.as_bytes());
+                    let _ = stdout.write(b"\n");
+                }
+                Output::Failed(input) => {
+                    eprintln!("concurr [WARN]: Job {} failed: {}", counter, input);
+                }
+            }
             counter += 1;
         }
     }
