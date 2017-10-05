@@ -194,28 +194,29 @@ fn main() {
 
         for result in results.drain(..) {
             if config.flags & configure::VERBOSE != 0 {
-                let _ = stdout.write_all(
-                    ["concurr [INFO] Job ", &counter.to_string(), "\n"].concat().as_bytes(),
-                );
+                let _ = stdout.write_all(b"concurr [INFO ");
+                let _ = stdout.write_all(counter.to_string().as_bytes());
+                let _ = stdout.write_all(b"]\n");
             }
             match result {
                 Output::Succeeded(out, err) => {
-                    eprintln!("concurr [INFO]: Job {}: Status: 0\nSTDERR: {}", counter, err);
+                    let _ = writeln!(stdout, "concurr [INFO {}]: 0", counter);
+                    for line in err.lines() {
+                        eprintln!("concurr [ERR {}]: {}", counter, line);
+                    }
                     let _ = stdout.write_all(out.as_bytes());
                     let _ = stdout.write(b"\n");
                 }
                 Output::Errored(status, out, err) => {
-                    eprintln!(
-                        "concurr [WARN]: Job {}: Status: {}\nSTDERR: {}",
-                        counter,
-                        status,
-                        err
-                    );
+                    let _ = writeln!(stdout, "concurr [INFO {}]: {}", counter, status);
+                    for line in err.lines() {
+                        eprintln!("concurr [ERR {}]: {}", counter, line);
+                    }
                     let _ = stdout.write_all(out.as_bytes());
                     let _ = stdout.write(b"\n");
                 }
                 Output::Failed(input) => {
-                    eprintln!("concurr [WARN]: Job {} failed: {}", counter, input);
+                    eprintln!("concurr [WARN {}]: failed to execute '{}'", counter, input);
                 }
             }
             counter += 1;

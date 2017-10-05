@@ -14,6 +14,7 @@ extern crate tokio_tls;
 mod command;
 mod jobs;
 mod service;
+mod signals;
 
 use app_dirs::{get_app_dir, AppDataType};
 use concurr::APP_INFO;
@@ -22,23 +23,27 @@ use native_tls::{Pkcs12, TlsAcceptor};
 use service::{Concurr, ConcurrProto};
 use std::fs::File;
 use std::io::Read;
-use std::mem;
 use std::process::exit;
-use std::ptr;
 use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 use tokio_proto::TcpServer;
 use tokio_tls::proto::Server as TlsProto;
+use std::thread;
+use std::time::Duration;
+
+pub static PENDING: AtomicUsize = ATOMIC_USIZE_INIT;
+
+extern "C" fn handler(signal: i32) {
+    PENDING.fetch_or(1 << signal, Ordering::SeqCst);
+}
 
 fn main() {
     unsafe {
         setpgid(0, 0);
-        let mut sigset = mem::uninitialized::<sigset_t>();
-        sigemptyset(&mut sigset as *mut sigset_t);
-        sigaddset(&mut sigset as *mut sigset_t, SIGTSTP);
-        sigaddset(&mut sigset as *mut sigset_t, SIGTTOU);
-        sigaddset(&mut sigset as *mut sigset_t, SIGTTIN);
-        sigaddset(&mut sigset as *mut sigset_t, SIGCHLD);
-        sigprocmask(SIG_BLOCK, &sigset as *const sigset_t, ptr::null_mut() as *mut sigset_t);
+        signals::block();
+        signals::signal(libc::SIGINT, handler).unwrap();
+        signals::signal(libc::SIGTERM, handler).unwrap();
+        signals::signal(libc::SIGHUP, handler).unwrap();
     }
 
     let result = get_app_dir(AppDataType::UserConfig, &APP_INFO, "server.pfx").map(|p| {
@@ -65,12 +70,20 @@ fn main() {
     };
 
     let tls_cx = TlsAcceptor::builder(cert).unwrap().build().unwrap();
-
     let cmds = Arc::new(RwLock::new(Vec::new()));
     let addr = "0.0.0.0:31514".parse().unwrap();
     let mut server = TcpServer::new(TlsProto::new(ConcurrProto, tls_cx), addr);
     let ncores = num_cpus::get();
     server.threads(ncores + (ncores / 2));
     eprintln!("Launching service on '0.0.0.0:31514'.");
-    server.serve(move || Ok(Concurr::new(cmds.clone())));
+    thread::spawn(move || server.serve(move || Ok(Concurr::new(cmds.clone()))));
+
+    loop {
+        thread::sleep(Duration::from_millis(1000));
+        for &signal in &[libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            if PENDING.fetch_and(!(1 << signal), Ordering::SeqCst) & (1 << signal) == 1 << signal {
+                exit(1)
+            }
+        }
+    }
 }
