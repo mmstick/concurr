@@ -30,6 +30,7 @@ use tokio_proto::TcpServer;
 use tokio_tls::proto::Server as TlsProto;
 use std::thread;
 use std::time::Duration;
+use std::env::args;
 
 pub static PENDING: AtomicUsize = ATOMIC_USIZE_INIT;
 
@@ -46,6 +47,28 @@ fn main() {
         signals::signal(libc::SIGHUP, handler).unwrap();
     }
 
+    let mut port = 3154;
+    let mut args = args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                unimplemented!();
+            },
+            "-p" | "--port" => match args.next().map(|x| x.parse::<u32>()) {
+                Some(Ok(p)) => port = p,
+                Some(_) => {
+                    eprintln!("concurr [CRITICAL]: invalid port value");
+                    exit(1);
+                },
+                None => {
+                    eprintln!("concurr [CRITICAL]: no port value supplied");
+                    exit(1);
+                }
+            }
+            _ => ()
+        }
+    }
+
     let result = get_app_dir(AppDataType::UserConfig, &APP_INFO, "server.pfx").map(|p| {
         File::open(p).and_then(|mut file| {
             let mut buf = Vec::new();
@@ -53,6 +76,7 @@ fn main() {
         })
     });
 
+    // Attempt to parse the certificate file necessary for encrypting traffic to the server.
     let cert = match result {
         Ok(Ok(Ok(cert))) => cert,
         Ok(Ok(Err(why))) => {
@@ -69,13 +93,14 @@ fn main() {
         }
     };
 
+    let address = format!("0.0.0.0:{}", port);
     let tls_cx = TlsAcceptor::builder(cert).unwrap().build().unwrap();
     let cmds = Arc::new(RwLock::new(Vec::new()));
-    let addr = "0.0.0.0:31514".parse().unwrap();
+    let addr = address.parse().unwrap();
     let mut server = TcpServer::new(TlsProto::new(ConcurrProto, tls_cx), addr);
     let ncores = num_cpus::get();
     server.threads(ncores + (ncores / 2));
-    eprintln!("Launching service on '0.0.0.0:31514'.");
+    eprintln!("Launching service on '{}'.", address);
     thread::spawn(move || server.serve(move || Ok(Concurr::new(cmds.clone()))));
 
     loop {

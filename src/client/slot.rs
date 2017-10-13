@@ -45,6 +45,17 @@ impl<'a> Slot<'a> {
         }
     }
 
+    fn next_input(&self) -> Option<(usize, String, u8)> {
+        let mut inputs = self.inputs.lock().unwrap();
+        match inputs.pop_front() {
+            Some((jid, input)) => Some((jid, input, 0u8)),
+            None => {
+                let mut errors = self.errors.lock().unwrap();
+                errors.pop_back()
+            }
+        }
+    }
+
     /// Listen for inputs, pass the inputs along, and store the outputs, serially.
     ///
     /// This function contains the event loop that will run on each spawned slot, on each node.
@@ -70,27 +81,14 @@ impl<'a> Slot<'a> {
             // A cache for eliminating heap allocations within the slot.
             let mut cache = ResultsCache::new();
 
-            loop {
-                if self.kill.load(Ordering::Relaxed) {
-                    let _ = self.parked.fetch_add(1, Ordering::Relaxed);
-                    return;
-                }
-
+            // Attempt to grab inputs from the inputs buffer until a kill signal is given.
+            while !self.kill.load(Ordering::Relaxed) {
                 // Grab an input from the shared inputs buffer.
-                let (jid, input, tries) = {
-                    let mut inputs = self.inputs.lock().unwrap();
-                    match inputs.pop_front() {
-                        Some((jid, input)) => (jid, input, 0),
-                        None => {
-                            let mut errors = self.errors.lock().unwrap();
-                            match errors.pop_back() {
-                                Some(input) => input,
-                                None => {
-                                    thread::sleep(Duration::from_millis(1));
-                                    continue;
-                                }
-                            }
-                        }
+                let (jid, input, tries) = match self.next_input() {
+                    Some(input) => input,
+                    None => {
+                        thread::sleep(Duration::from_millis(1));
+                        continue;
                     }
                 };
 
@@ -117,6 +115,7 @@ impl<'a> Slot<'a> {
                     thread::sleep(Duration::from_secs(1));
                 }
             }
+            let _ = self.parked.fetch_add(1, Ordering::Relaxed);
         }
     }
 }

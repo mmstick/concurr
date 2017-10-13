@@ -77,6 +77,7 @@ fn main() {
         }
         let domain = Arc::new(node.domain.clone());
         for _ in 0..node.cores {
+            eprintln!("spawned core on node");
             let address = node.address;
             let id = node.command;
             let inputs = inputs.clone();

@@ -6,8 +6,9 @@ use std::io::Read;
 use std::process::exit;
 
 pub fn get(domain: &str) -> Certificate {
+    let cert = [domain, ".der"].concat();
     let result =
-        get_app_dir(AppDataType::UserConfig, &APP_INFO, &[domain, ".der"].concat()).map(|p| {
+        get_app_dir(AppDataType::UserConfig, &APP_INFO, &cert).map(|p| {
             File::open(p).and_then(|mut file| {
                 let mut buf = Vec::new();
                 file.read_to_end(&mut buf).map(|_| Certificate::from_der(&buf))
@@ -17,11 +18,11 @@ pub fn get(domain: &str) -> Certificate {
     match result {
         Ok(Ok(Ok(cert))) => cert,
         Ok(Ok(Err(why))) => {
-            eprintln!("concurr [CRITICAL]: error parsing cert: {}", why);
+            eprintln!("concurr [CRITICAL]: error parsing '{}' in cert path: {}", cert, why);
             exit(1);
         }
         Ok(Err(why)) => {
-            eprintln!("concurr [CRITICAL]: error reading cert file: {}", why);
+            eprintln!("concurr [CRITICAL]: error reading '{}' in cert path: {}", cert, why);
             exit(1);
         }
         Err(why) => {
