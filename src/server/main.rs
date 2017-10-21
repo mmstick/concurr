@@ -1,6 +1,7 @@
 extern crate app_dirs;
 extern crate bytes;
 extern crate concurr;
+extern crate coco;
 extern crate futures;
 extern crate ion_shell;
 extern crate libc;
@@ -47,7 +48,7 @@ fn main() {
         signals::signal(libc::SIGHUP, handler).unwrap();
     }
 
-    let mut port = 3154;
+    let mut port = 31514;
     let mut args = args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {

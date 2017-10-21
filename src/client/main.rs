@@ -68,7 +68,9 @@ fn main() {
     let errors = Arc::new(Mutex::new(VecDeque::new()));
     let failed = Arc::new(Mutex::new(BTreeMap::new()));
     let kill = Arc::new(AtomicBool::new(false));
-    let parked = Arc::new(AtomicUsize::new(0));
+
+    // Useful for knowing when to exit the program
+    let mut handles = Vec::new();
 
     // Spawn slots for submitting inputs to each connected node.
     for node in &nodes {
@@ -85,12 +87,12 @@ fn main() {
             let errors = errors.clone();
             let failed = failed.clone();
             let kill = kill.clone();
-            let parked = parked.clone();
             let domain = domain.clone();
-            thread::spawn(move || {
-                Slot::new(inputs, outputs, errors, failed, kill, parked, address, id, &domain)
+            let handle = thread::spawn(move || {
+                Slot::new(inputs, outputs, errors, failed, kill, address, id, &domain)
                     .spawn()
             });
+            handles.push(handle);
         }
     }
 
@@ -236,9 +238,6 @@ fn main() {
     }
 
     // Stop the threads that are running in the background.
-    let spawned_threads = nodes.into_iter().map(|x| x.cores).sum();
     kill.store(true, Ordering::Relaxed);
-    while parked.load(Ordering::Relaxed) != spawned_threads {
-        thread::sleep(Duration::from_millis(1));
-    }
+    handles.into_iter().for_each(|h| h.join().unwrap());
 }

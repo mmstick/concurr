@@ -4,6 +4,7 @@ version = "0.1.0"
 dependencies = [
  "app_dirs 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "bytes 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "coco 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)",
  "ion-shell 1.0.5 (git+https://github.com/redox-os/ion)",
  "libc 0.2.31 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -108,6 +109,15 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
+name = "coco"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "either 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "scopeguard 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "conv"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -144,6 +154,11 @@ dependencies = [
 [[package]]
 name = "custom_derive"
 version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "either"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -453,6 +468,11 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
+name = "scopeguard"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
 name = "secur32-sys"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -751,11 +771,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum calculate 0.3.0 (git+https://github.com/redox-os/calc.git)" = "<none>"
 "checksum cc 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "7db2f146208d7e0fbee761b09cd65a7f51ccc38705d4e7262dad4d73b12a76b1"
 "checksum cfg-if 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "d4c819a1287eb618df47cc647173c5c4c66ba19d888a6e50d605672aed3140de"
+"checksum coco 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "9377a9bed3a0eb3d63c6e9081efb110c08588850a7afbe5a86af53aac5e1daa0"
 "checksum conv 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "78ff10625fd0ac447827aa30ea8b861fead473bb60aeb73af6c1c58caf0d1299"
 "checksum core-foundation 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "25bfd746d203017f7d5cbd31ee5d8e17f94b6521c7af77ece6c9e4b2d4b16c67"
 "checksum core-foundation-sys 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "065a5d7ffdcbc8fa145d6f0746f3555025b9097a9e9cda59f7467abae670c78d"
 "checksum crypt32-sys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "e34988f7e069e0b2f3bfc064295161e489b2d4e04a2e4248fb94360cdf00b4ec"
 "checksum custom_derive 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)" = "ef8ae57c4978a2acd8b869ce6b9ca1dfe817bff704c220209fdef2c0b75a01b9"
+"checksum either 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "e311a7479512fbdf858fb54d91ec59f3b9f85bc0113659f46bba12b199d273ce"
 "checksum fnv 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)" = "6cc484842f1e2884faf56f529f960cc12ad8c71ce96cc7abba0a067c98fee344"
 "checksum foreign-types 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "3e4056b9bd47f8ac5ba12be771f77a0dae796d1bbaaf5fd0b9c2d38b69b8a29d"
 "checksum futures 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)" = "05a23db7bd162d4e8265968602930c476f688f0c180b44bdaf55e0cb2c687558"
@@ -791,6 +813,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum regex-syntax 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ad890a5eef7953f55427c50575c680c42841653abd2b028b68cd223d157f62db"
 "checksum schannel 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)" = "7554288337c1110e34d7a2433518d889374c1de1a45f856b7bcddb03702131fc"
 "checksum scoped-tls 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "f417c22df063e9450888a7561788e9bd46d3bb3c1466435b4eccb903807f147d"
+"checksum scopeguard 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "94258f53601af11e6a49f722422f6e3425c52b06245a5cf9bc09908b174f5e27"
 "checksum secur32-sys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "3f412dfa83308d893101dd59c10d6fda8283465976c28c287c5c855bf8d216bc"
 "checksum security-framework 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)" = "dfa44ee9c54ce5eecc9de7d5acbad112ee58755239381f687e564004ba4a2332"
 "checksum security-framework-sys 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)" = "5421621e836278a0b139268f36eee0dc7e389b784dc3f79d8f11aabadf41bead"

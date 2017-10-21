@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -14,7 +14,6 @@ pub struct Slot<'a> {
     errors:  Arc<Mutex<VecDeque<(usize, String, u8)>>>,
     failed:  Arc<Mutex<BTreeMap<usize, String>>>,
     kill:    Arc<AtomicBool>,
-    parked:  Arc<AtomicUsize>,
     address: SocketAddr,
     id:      usize,
     domain:  &'a str,
@@ -27,7 +26,6 @@ impl<'a> Slot<'a> {
         errors: Arc<Mutex<VecDeque<(usize, String, u8)>>>,
         failed: Arc<Mutex<BTreeMap<usize, String>>>,
         kill: Arc<AtomicBool>,
-        parked: Arc<AtomicUsize>,
         address: SocketAddr,
         id: usize,
         domain: &'a str,
@@ -40,7 +38,6 @@ impl<'a> Slot<'a> {
             address,
             id,
             kill,
-            parked,
             domain,
         }
     }
@@ -115,7 +112,7 @@ impl<'a> Slot<'a> {
                     thread::sleep(Duration::from_secs(1));
                 }
             }
-            let _ = self.parked.fetch_add(1, Ordering::Relaxed);
+            break
         }
     }
 }

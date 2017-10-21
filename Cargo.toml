@@ -18,6 +18,7 @@ path = "src/server/main.rs"
 [dependencies]
 app_dirs = "1.1"
 bytes = "0.4"
+coco = "0.3.0"
 futures = "0.1"
 libc = "0.2"
 native-tls = "0.1"

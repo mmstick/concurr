@@ -2,7 +2,7 @@ use super::super::command::{PreparedCommand, Token};
 use ion_shell::{Builtin, Shell};
 use ion_shell::shell::library::IonLibrary;
 use libc;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::io;
 use std::os::unix::io::RawFd;
 use std::process::exit;
@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
+use coco::Stack;
 
 const STDOUT_FILENO: i32 = libc::STDOUT_FILENO;
 const STDERR_FILENO: i32 = libc::STDERR_FILENO;
@@ -17,7 +18,7 @@ const STDERR_FILENO: i32 = libc::STDERR_FILENO;
 pub fn slot_event(
     sid: usize,
     command: PreparedCommand,
-    inputs: Arc<Mutex<VecDeque<(usize, String)>>>,
+    inputs: Arc<Stack<(usize, String)>>,
     outputs: Arc<Mutex<BTreeMap<usize, Option<(u8, RawFd, RawFd)>>>>,
     kill: Arc<AtomicBool>,
     parked: Arc<AtomicUsize>,
@@ -32,9 +33,7 @@ pub fn slot_event(
     while kill.load(Ordering::Relaxed) != true {
         buffer.clear();
         thread::sleep(Duration::from_millis(1));
-        let mut lock = inputs.lock().unwrap();
-        if let Some((jid, input)) = lock.pop_front() {
-            drop(lock);
+        if let Some((jid, input)) = inputs.pop() {
             for token in &command.tokens {
                 match *token {
                     Token::Placeholder => buffer.push_str(&input),

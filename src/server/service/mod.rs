@@ -6,11 +6,12 @@ pub use self::codec::*;
 pub use self::events::*;
 pub use self::proto::*;
 
+use coco::Stack;
 use command::PreparedCommand;
 use futures::{future, Future};
 use jobs::{slot_event, Job};
 use num_cpus;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, Read};
 use std::os::unix::io::FromRawFd;
@@ -56,7 +57,7 @@ impl Service for Concurr {
                 let command = PreparedCommand::new(&cmd);
 
                 // This will store the inputs that each slot will concurrently grab inputs from.
-                let inputs = Arc::new(Mutex::new(VecDeque::new()));
+                let inputs = Arc::new(Stack::new());
                 // While this will store the results of each complete job.
                 let outputs = Arc::new(Mutex::new(BTreeMap::new()));
                 // This will be used to notify threads that it's time to stop.
@@ -117,9 +118,7 @@ impl Service for Concurr {
                 let commands = self.commands.read().unwrap();
                 match commands.get(cid) {
                     Some(&Some(ref unit)) => {
-                        let mut inputs = unit.inputs.lock().unwrap();
-                        inputs.push_back((jid, input.clone()));
-                        drop(inputs);
+                        unit.inputs.push((jid, input.clone()));
 
                         let result = loop {
                             thread::sleep(Duration::from_millis(1));
