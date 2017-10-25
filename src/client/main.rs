@@ -1,6 +1,8 @@
 extern crate app_dirs;
 extern crate concurr;
+extern crate libc;
 extern crate native_tls;
+extern crate num_cpus;
 #[allow(unused_extern_crates)]
 extern crate serde;
 #[macro_use]
@@ -12,11 +14,16 @@ mod certificate;
 mod configure;
 mod connection;
 mod inputs;
+mod outputs;
 mod nodes;
 mod redirection;
 mod slot;
+mod source;
 
+use self::inputs::Inputs;
+use self::outputs::{Output, Outputs};
 use args::{ArgUnit, ArgsSource, Arguments};
+use concurr::{slot_event, InsertJob, Tokens};
 use configure::Config;
 use slot::Slot;
 use std::collections::{BTreeMap, VecDeque};
@@ -26,13 +33,7 @@ use std::process::exit;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
-
-pub enum Output {
-    Succeeded(String, String),
-    Errored(u8, String, String),
-    Failed(String),
-}
+use std::time::Instant;
 
 fn main() {
     // Read the configuration file to get a list of nodes to connect to.
@@ -63,8 +64,13 @@ fn main() {
     };
 
     // Input and output queues that will be concurrently accessed across threads.
-    let inputs = Arc::new(Mutex::new(VecDeque::new()));
-    let outputs = Arc::new(Mutex::new(BTreeMap::new()));
+    let slot_id = Arc::new(AtomicUsize::new(0));
+    let inputs = Arc::new(Inputs {
+        inputs: Mutex::new(VecDeque::new()),
+    });
+    let outputs = Arc::new(Outputs {
+        outputs: Mutex::new(BTreeMap::new()),
+    });
     let errors = Arc::new(Mutex::new(VecDeque::new()));
     let failed = Arc::new(Mutex::new(BTreeMap::new()));
     let kill = Arc::new(AtomicBool::new(false));
@@ -72,14 +78,40 @@ fn main() {
     // Useful for knowing when to exit the program
     let mut handles = Vec::new();
 
-    // Spawn slots for submitting inputs to each connected node.
+    // If enabled, the client will also act as a node.
+    if config.flags & configure::LOCHOST != 0 {
+        let command = Tokens::new(arguments.get_command());
+        let parked = Arc::new(AtomicUsize::new(0));
+        let cores = num_cpus::get();
+
+        for _ in 0..cores {
+            let command = command.clone();
+            let inputs = inputs.clone();
+            let outputs = outputs.clone();
+            let kill = kill.clone();
+            let parked = parked.clone();
+            let slot_id = slot_id.clone();
+            let handle = thread::spawn(move || {
+                slot_event(
+                    slot_id.fetch_add(1, Ordering::SeqCst),
+                    command,
+                    inputs,
+                    outputs,
+                    kill,
+                    parked,
+                )
+            });
+            handles.push(handle);
+        }
+    }
+
+    // Spawn slots for submitting inputs to each external node.
     for node in &nodes {
         if config.flags & configure::VERBOSE != 0 {
             eprintln!("concurr [INFO]: found {} cores on {:?}", node.cores, node.address);
         }
         let domain = Arc::new(node.domain.clone());
         for _ in 0..node.cores {
-            eprintln!("spawned core on node");
             let address = node.address;
             let id = node.command;
             let inputs = inputs.clone();
@@ -89,8 +121,7 @@ fn main() {
             let kill = kill.clone();
             let domain = domain.clone();
             let handle = thread::spawn(move || {
-                Slot::new(inputs, outputs, errors, failed, kill, address, id, &domain)
-                    .spawn()
+                Slot::new(inputs, outputs, errors, failed, kill, address, id, &domain).spawn()
             });
             handles.push(handle);
         }
@@ -109,7 +140,7 @@ fn main() {
             thread::spawn(move || {
                 let inputs_finished = inputs_finished.clone();
                 let ninputs = &mut 0;
-                inputs::file(&inputs, &path, ninputs);
+                source::file(&inputs, &path, ninputs);
                 total_inputs.store(*ninputs, Ordering::SeqCst);
                 inputs_finished.store(true, Ordering::SeqCst);
             });
@@ -119,7 +150,7 @@ fn main() {
             let inputs_finished = inputs_finished.clone();
             thread::spawn(move || {
                 let ninputs = &mut 0;
-                inputs::stdin(&inputs, ninputs);
+                source::stdin(&inputs, ninputs);
                 total_inputs.store(*ninputs, Ordering::SeqCst);
                 inputs_finished.store(true, Ordering::SeqCst);
             });
@@ -136,8 +167,7 @@ fn main() {
                 ArgUnit::Strings(ref vec) => {
                     let mut ninputs = 0;
                     for ref input in vec.iter() {
-                        let mut inputs = inputs.lock().unwrap();
-                        inputs.push_back((ninputs, String::from(input.as_str())));
+                        inputs.insert_job(ninputs, String::from(input.as_str()));
                         ninputs += 1;
                     }
                     total_inputs.store(ninputs, Ordering::SeqCst);
@@ -146,7 +176,7 @@ fn main() {
                 ArgUnit::Files(ref vec) => {
                     let ninputs = &mut 0;
                     for path in vec.iter() {
-                        inputs::file(&inputs, &Path::new(path), ninputs);
+                        source::file(&inputs, &Path::new(path), ninputs);
                     }
                     total_inputs.store(*ninputs, Ordering::SeqCst);
                     inputs_finished.store(true, Ordering::SeqCst);
@@ -156,8 +186,7 @@ fn main() {
     }
 
     let stdout = io::stdout();
-    let mut stdout = stdout.lock();
-    let mut results = Vec::new();
+    let stdout = &mut stdout.lock();
     let mut counter = 0;
     let start = Instant::now();
 
@@ -165,65 +194,24 @@ fn main() {
     while !(inputs_finished.load(Ordering::Relaxed)
         && counter == total_inputs.load(Ordering::Relaxed))
     {
-        thread::sleep(Duration::from_millis(1));
-
-        {
-            let mut counter = counter;
-            loop {
-                let mut outputs = outputs.lock().unwrap();
-                if let Some((status, out, err)) = outputs.remove(&counter) {
-                    results.push(if status == 0 {
-                        Output::Succeeded(out, err)
-                    } else {
-                        Output::Errored(status, out, err)
-                    });
-                    counter += 1;
+        match outputs.remove(&counter) {
+            Output::Succeeded(mut source) => {
+                if config.flags & configure::VERBOSE != 0 {
+                    let _ = writeln!(stdout, "Job {}: 0", counter);
                 }
-                drop(outputs);
-
-                let mut failed = failed.lock().unwrap();
-                if let Some(output) = failed.remove(&counter) {
-                    results.push(Output::Failed(output));
-                    counter += 1;
+                source.write(stdout)
+            }
+            Output::Errored(status, mut source) => {
+                if config.flags & configure::VERBOSE != 0 {
+                    let _ = writeln!(stdout, "Job {}: {}", counter, status);
                 }
-                drop(failed);
-
-                if !results.is_empty() {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(1));
+                source.write(stdout);
+            }
+            Output::Failed => {
+                eprintln!("Job {} failed to execute", counter);
             }
         }
-
-        for result in results.drain(..) {
-            if config.flags & configure::VERBOSE != 0 {
-                let _ = stdout.write_all(b"concurr [INFO ");
-                let _ = stdout.write_all(counter.to_string().as_bytes());
-                let _ = stdout.write_all(b"]\n");
-            }
-            match result {
-                Output::Succeeded(out, err) => {
-                    let _ = writeln!(stdout, "concurr [INFO {}]: 0", counter);
-                    for line in err.lines() {
-                        eprintln!("concurr [ERR {}]: {}", counter, line);
-                    }
-                    let _ = stdout.write_all(out.as_bytes());
-                    let _ = stdout.write(b"\n");
-                }
-                Output::Errored(status, out, err) => {
-                    let _ = writeln!(stdout, "concurr [INFO {}]: {}", counter, status);
-                    for line in err.lines() {
-                        eprintln!("concurr [ERR {}]: {}", counter, line);
-                    }
-                    let _ = stdout.write_all(out.as_bytes());
-                    let _ = stdout.write(b"\n");
-                }
-                Output::Failed(input) => {
-                    eprintln!("concurr [WARN {}]: failed to execute '{}'", counter, input);
-                }
-            }
-            counter += 1;
-        }
+        counter += 1;
     }
 
     let time = Instant::now() - start;

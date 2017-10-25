@@ -1,20 +1,21 @@
 mod codec;
 mod events;
+mod inputs;
+mod outputs;
 mod proto;
 
 pub use self::codec::*;
 pub use self::events::*;
 pub use self::proto::*;
 
+use self::inputs::Inputs;
+use self::outputs::Outputs;
 use coco::Stack;
-use command::PreparedCommand;
+use concurr::{slot_event, InsertJob, Job, Tokens};
 use futures::{future, Future};
-use jobs::{slot_event, Job};
 use num_cpus;
 use std::collections::BTreeMap;
-use std::fs::File;
 use std::io::{self, Read};
-use std::os::unix::io::FromRawFd;
 use std::str;
 use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -28,7 +29,8 @@ fn obtain(input: &[u8]) -> io::Result<String> {
         .map_err(|_| io::Error::new(io::ErrorKind::Other, "invalid UTF-8"))
 }
 
-type Jobs = Arc<RwLock<Vec<Option<Job>>>>;
+
+type Jobs = Arc<RwLock<Vec<Option<Job<Inputs, Outputs>>>>>;
 
 pub struct Concurr {
     commands: Jobs,
@@ -54,12 +56,16 @@ impl Service for Concurr {
             JobEvent::Command(cmd) => {
                 // Contains the tokenized expression of the command that will be shared
                 // with each slot attached to the command.
-                let command = PreparedCommand::new(&cmd);
+                let command = Tokens::new(&cmd);
 
                 // This will store the inputs that each slot will concurrently grab inputs from.
-                let inputs = Arc::new(Stack::new());
+                let inputs = Arc::new(Inputs {
+                    stack: Stack::new(),
+                });
                 // While this will store the results of each complete job.
-                let outputs = Arc::new(Mutex::new(BTreeMap::new()));
+                let outputs = Arc::new(Outputs {
+                    outputs: Mutex::new(BTreeMap::new()),
+                });
                 // This will be used to notify threads that it's time to stop.
                 let kill = Arc::new(AtomicBool::new(false));
                 // And this will be used to determine when all threads have stopped.
@@ -118,21 +124,11 @@ impl Service for Concurr {
                 let commands = self.commands.read().unwrap();
                 match commands.get(cid) {
                     Some(&Some(ref unit)) => {
-                        unit.inputs.push((jid, input.clone()));
-
-                        let result = loop {
-                            thread::sleep(Duration::from_millis(1));
-                            if let Ok(ref mut outputs) = unit.outputs.try_lock() {
-                                if let Some(result) = outputs.remove(&jid) {
-                                    break result;
-                                }
-                            }
-                        };
+                        unit.inputs.insert_job(jid, input.clone());
+                        let result = unit.outputs.remove(&jid);
 
                         match result {
-                            Some((status, stdout, stderr)) => {
-                                let mut stdout = unsafe { File::from_raw_fd(stdout) };
-                                let mut stderr = unsafe { File::from_raw_fd(stderr) };
+                            Some((status, mut stdout, mut stderr)) => {
                                 let mut outbuf = String::new();
                                 let mut errbuf = String::new();
                                 let _ = stdout.read_to_string(&mut outbuf);

@@ -1,4 +1,7 @@
+
+use super::{Inputs, Outputs};
 use certificate;
+use concurr::InsertJob;
 use connection::{attempt_connection, attempt_write};
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -9,8 +12,8 @@ use std::thread;
 use std::time::Duration;
 
 pub struct Slot<'a> {
-    inputs:  Arc<Mutex<VecDeque<(usize, String)>>>,
-    outputs: Arc<Mutex<BTreeMap<usize, (u8, String, String)>>>,
+    inputs:  Arc<Inputs>,
+    outputs: Arc<Outputs>,
     errors:  Arc<Mutex<VecDeque<(usize, String, u8)>>>,
     failed:  Arc<Mutex<BTreeMap<usize, String>>>,
     kill:    Arc<AtomicBool>,
@@ -21,8 +24,8 @@ pub struct Slot<'a> {
 
 impl<'a> Slot<'a> {
     pub fn new(
-        inputs: Arc<Mutex<VecDeque<(usize, String)>>>,
-        outputs: Arc<Mutex<BTreeMap<usize, (u8, String, String)>>>,
+        inputs: Arc<Inputs>,
+        outputs: Arc<Outputs>,
         errors: Arc<Mutex<VecDeque<(usize, String, u8)>>>,
         failed: Arc<Mutex<BTreeMap<usize, String>>>,
         kill: Arc<AtomicBool>,
@@ -43,8 +46,7 @@ impl<'a> Slot<'a> {
     }
 
     fn next_input(&self) -> Option<(usize, String, u8)> {
-        let mut inputs = self.inputs.lock().unwrap();
-        match inputs.pop_front() {
+        match self.inputs.get_job() {
             Some((jid, input)) => Some((jid, input, 0u8)),
             None => {
                 let mut errors = self.errors.lock().unwrap();
@@ -112,7 +114,7 @@ impl<'a> Slot<'a> {
                     thread::sleep(Duration::from_secs(1));
                 }
             }
-            break
+            break;
         }
     }
 }
@@ -122,7 +124,7 @@ impl<'a> Slot<'a> {
 /// escaped.
 fn read_results<STREAM: Read>(
     stream: &mut STREAM,
-    outputs: &Arc<Mutex<BTreeMap<usize, (u8, String, String)>>>,
+    outputs: &Arc<Outputs>,
     cache: &mut ResultsCache,
 ) -> io::Result<()> {
     let buffer = BufReader::new(stream);
@@ -130,11 +132,8 @@ fn read_results<STREAM: Read>(
     cache.read_from(buffer)?;
     // Attempt to parse the status line that was read.
     let (id, status) = cache.parse_status()?;
-    // Escape the stdout and stderr values.
-    let output = (status, unescape(&cache.stdout), unescape(&cache.stderr));
     // Push them onto the outputs buffer.
-    let mut outputs = outputs.lock().unwrap();
-    outputs.insert(id, output);
+    outputs.push_external(id, status, unescape(&cache.stdout), unescape(&cache.stderr));
     Ok(())
 }
 

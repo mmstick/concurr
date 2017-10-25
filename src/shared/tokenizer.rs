@@ -4,7 +4,6 @@ use std::fmt::{self, Display, Formatter};
 // - {}: Placeholder
 // - {%}: Slot Number
 // - {#}: Job Number
-// - {##}: Total Job Number
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Token {
@@ -18,19 +17,22 @@ const PLACE: u8 = 1;
 const OPEN: u8 = 2;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct PreparedCommand {
+pub struct Tokens {
     pub tokens: Vec<Token>,
 }
 
-impl PreparedCommand {
-    pub fn new(input: &str) -> PreparedCommand {
+impl Tokens {
+    pub fn new(input: &str) -> Tokens {
         let mut tokens = Vec::new();
         let mut start = 0;
-        // Value will be set to true when a placeholder token is utilized.
         let mut flags = 0;
+        let mut chars = input.char_indices();
 
-        for (id, character) in input.char_indices() {
+        while let Some((id, character)) = chars.next() {
             match character {
+                '\\' => {
+                    let _ = chars.next();
+                }
                 '{' if flags & OPEN == 0 => {
                     flags |= OPEN;
                     if start != id {
@@ -74,11 +76,11 @@ impl PreparedCommand {
             tokens.push(Token::Placeholder)
         }
 
-        PreparedCommand { tokens }
+        Tokens { tokens }
     }
 }
 
-impl Display for PreparedCommand {
+impl Display for Tokens {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         for token in &self.tokens {
             match *token {
@@ -94,11 +96,11 @@ impl Display for PreparedCommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{PreparedCommand, Token};
+    use super::{Token, Tokens};
 
     #[test]
     fn tokens() {
-        let expected = PreparedCommand {
+        let expected = Tokens {
             tokens: vec![
                 Token::Text("echo ".into()),
                 Token::Job,
@@ -107,7 +109,7 @@ mod tests {
             ],
         };
 
-        assert_eq!(PreparedCommand::new("echo {#}: {}"), expected);
-        assert_eq!(PreparedCommand::new("echo {#}:"), expected);
+        assert_eq!(Tokens::new("echo {#}: {}"), expected);
+        assert_eq!(Tokens::new("echo {#}:"), expected);
     }
 }

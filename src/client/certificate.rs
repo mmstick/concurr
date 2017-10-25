@@ -7,13 +7,12 @@ use std::process::exit;
 
 pub fn get(domain: &str) -> Certificate {
     let cert = [domain, ".der"].concat();
-    let result =
-        get_app_dir(AppDataType::UserConfig, &APP_INFO, &cert).map(|p| {
-            File::open(p).and_then(|mut file| {
-                let mut buf = Vec::new();
-                file.read_to_end(&mut buf).map(|_| Certificate::from_der(&buf))
-            })
-        });
+    let result = get_app_dir(AppDataType::UserConfig, &APP_INFO, &cert).map(|p| {
+        File::open(p).and_then(|mut file| {
+            let mut buf = Vec::new();
+            file.read_to_end(&mut buf).map(|_| Certificate::from_der(&buf))
+        })
+    });
 
     match result {
         Ok(Ok(Ok(cert))) => cert,

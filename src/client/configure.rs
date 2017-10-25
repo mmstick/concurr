@@ -17,9 +17,10 @@ struct Node {
 
 #[derive(Deserialize)]
 struct RawConfig {
-    nodes:   Vec<Node>,
-    outputs: Option<bool>,
-    verbose: Option<bool>,
+    nodes:     Vec<Node>,
+    localhost: Option<bool>,
+    outputs:   Option<bool>,
+    verbose:   Option<bool>,
 }
 
 impl RawConfig {
@@ -30,12 +31,14 @@ impl RawConfig {
         }
         let mut flags = if self.outputs.unwrap_or(false) { OUTPUTS } else { 0 };
         flags |= if self.verbose.unwrap_or(false) { VERBOSE } else { 0 };
+        flags |= if self.localhost.unwrap_or(true) { LOCHOST } else { 0 };
         Ok(Config { nodes, flags })
     }
 }
 
 pub const OUTPUTS: u8 = 1;
 pub const VERBOSE: u8 = 2;
+pub const LOCHOST: u8 = 4;
 
 pub struct Config {
     pub nodes: Vec<(SocketAddr, String)>,
@@ -58,9 +61,12 @@ const DEFAULT_CONFIG: &str = r#"
 # point of view, whereas the domain defines the name written in the server's
 # SSL certificate -- for security purposes.
 nodes = [
-    { address = "127.0.0.1:31514", domain = "localhost" },
+    # { address = "192.168.1.2:31514", domain = "node1" },
+    # { address = "192.168.1.3:31514", domain = "node2" },
 ]
 
+# Wher the client should be used as a node in itself
+localhost = true
 # Whether the client should request the standard out / error of tasks.
 outputs = true
 # Whether additional information about jobs should be printed.

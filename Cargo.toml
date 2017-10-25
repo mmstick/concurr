@@ -20,6 +20,7 @@ app_dirs = "1.1"
 bytes = "0.4"
 coco = "0.3.0"
 futures = "0.1"
+lazy_static = "0.2.8"
 libc = "0.2"
 native-tls = "0.1"
 num_cpus = "1.0"
@@ -31,8 +32,8 @@ tokio-proto = "0.1"
 tokio-service = "0.1"
 toml = "0.4"
 
-[dependencies.ion-shell]
-git = "https://github.com/redox-os/ion"
+#[dependencies.ion-shell]
+#git = "https://github.com/redox-os/ion"
 
 [dependencies.tokio-tls]
 features = ["tokio-proto"]
