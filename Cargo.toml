@@ -18,6 +18,7 @@ path = "src/server/main.rs"
 [dependencies]
 app_dirs = "1.1"
 bytes = "0.4"
+chashmap = "2.2.0"
 coco = "0.3.0"
 futures = "0.1"
 lazy_static = "0.2.8"
@@ -31,9 +32,6 @@ tokio-io = "0.1"
 tokio-proto = "0.1"
 tokio-service = "0.1"
 toml = "0.4"
-
-#[dependencies.ion-shell]
-#git = "https://github.com/redox-os/ion"
 
 [dependencies.tokio-tls]
 features = ["tokio-proto"]

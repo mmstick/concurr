@@ -1,4 +1,5 @@
 extern crate app_dirs;
+extern crate chashmap;
 extern crate concurr;
 extern crate libc;
 extern crate native_tls;
@@ -23,10 +24,11 @@ mod source;
 use self::inputs::Inputs;
 use self::outputs::{Output, Outputs};
 use args::{ArgUnit, ArgsSource, Arguments};
+use chashmap::CHashMap;
 use concurr::{slot_event, InsertJob, Tokens};
 use configure::Config;
 use slot::Slot;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::exit;
@@ -69,10 +71,10 @@ fn main() {
         inputs: Mutex::new(VecDeque::new()),
     });
     let outputs = Arc::new(Outputs {
-        outputs: Mutex::new(BTreeMap::new()),
+        outputs: CHashMap::new(),
     });
     let errors = Arc::new(Mutex::new(VecDeque::new()));
-    let failed = Arc::new(Mutex::new(BTreeMap::new()));
+    let failed = Arc::new(CHashMap::new());
     let kill = Arc::new(AtomicBool::new(false));
 
     // Useful for knowing when to exit the program

@@ -1,5 +1,6 @@
 extern crate app_dirs;
 extern crate bytes;
+extern crate chashmap;
 extern crate coco;
 extern crate concurr;
 extern crate futures;

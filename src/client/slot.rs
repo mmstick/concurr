@@ -1,9 +1,10 @@
 
 use super::{Inputs, Outputs};
 use certificate;
+use chashmap::CHashMap;
 use concurr::InsertJob;
 use connection::{attempt_connection, attempt_write};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -15,7 +16,7 @@ pub struct Slot<'a> {
     inputs:  Arc<Inputs>,
     outputs: Arc<Outputs>,
     errors:  Arc<Mutex<VecDeque<(usize, String, u8)>>>,
-    failed:  Arc<Mutex<BTreeMap<usize, String>>>,
+    failed:  Arc<CHashMap<usize, String>>,
     kill:    Arc<AtomicBool>,
     address: SocketAddr,
     id:      usize,
@@ -27,7 +28,7 @@ impl<'a> Slot<'a> {
         inputs: Arc<Inputs>,
         outputs: Arc<Outputs>,
         errors: Arc<Mutex<VecDeque<(usize, String, u8)>>>,
-        failed: Arc<Mutex<BTreeMap<usize, String>>>,
+        failed: Arc<CHashMap<usize, String>>,
         kill: Arc<AtomicBool>,
         address: SocketAddr,
         id: usize,
@@ -105,8 +106,7 @@ impl<'a> Slot<'a> {
                 if let Err(why) = result {
                     eprintln!("concurr [CRITICAL]: slot error: {}", why);
                     if tries == 3 {
-                        let mut failed = self.failed.lock().unwrap();
-                        failed.insert(jid, input);
+                        self.failed.insert(jid, input);
                     } else {
                         let mut errors = self.errors.lock().unwrap();
                         errors.push_back((jid, input, tries + 1));

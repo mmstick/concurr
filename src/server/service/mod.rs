@@ -10,14 +10,14 @@ pub use self::proto::*;
 
 use self::inputs::Inputs;
 use self::outputs::Outputs;
+use chashmap::CHashMap;
 use coco::Stack;
 use concurr::{slot_event, InsertJob, Job, Tokens};
 use futures::{future, Future};
 use num_cpus;
-use std::collections::BTreeMap;
 use std::io::{self, Read};
 use std::str;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
@@ -64,7 +64,7 @@ impl Service for Concurr {
                 });
                 // While this will store the results of each complete job.
                 let outputs = Arc::new(Outputs {
-                    outputs: Mutex::new(BTreeMap::new()),
+                    outputs: CHashMap::new(),
                 });
                 // This will be used to notify threads that it's time to stop.
                 let kill = Arc::new(AtomicBool::new(false));

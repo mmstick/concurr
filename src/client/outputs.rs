@@ -1,8 +1,7 @@
+use chashmap::CHashMap;
 use concurr::InsertOutput;
-use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, StdoutLock, Write};
-use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 
@@ -33,7 +32,7 @@ impl OutputSource {
 }
 
 pub struct Outputs {
-    pub outputs: Mutex<BTreeMap<usize, Output>>,
+    pub outputs: CHashMap<usize, Output>,
 }
 
 pub enum Output {
@@ -47,18 +46,14 @@ impl Outputs {
         // Simply wrap the inputs as an `External` variant.
         let source = OutputSource::External(out, err);
         let output = Output::Outcome(status, source);
-
-        // Lock and insert the input into the queue.
-        let mut lock = self.outputs.lock().unwrap();
-        lock.insert(id, output);
+        self.outputs.insert(id, output);
     }
 
     /// Loops until the next output has been found. For each unsuccessful loop, the thread
     /// will wait 1ms before attempting to lock and grab the output again.
     pub fn get(&self, id: &usize) -> Output {
         loop {
-            let mut lock = self.outputs.lock().unwrap();
-            if let Some(element) = lock.remove(id) {
+            if let Some(element) = self.outputs.remove(id) {
                 return element;
             }
             thread::sleep(Duration::from_millis(1));
@@ -69,13 +64,12 @@ impl Outputs {
 impl InsertOutput for Outputs {
     /// Appends a new internal output onto the queue.
     fn insert(&self, id: usize, mut result: Option<(u8, File, File)>) {
-        let mut lock = self.outputs.lock().unwrap();
         let output = match result.take() {
             Some((sts, out, err)) => {
                 Output::Outcome(sts, OutputSource::Internal(out, err))
             }
             None => Output::Failed,
         };
-        lock.insert(id, output);
+        self.outputs.insert(id, output);
     }
 }
