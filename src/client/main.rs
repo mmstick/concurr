@@ -84,6 +84,10 @@ fn main() {
         let parked = Arc::new(AtomicUsize::new(0));
         let cores = num_cpus::get();
 
+        if config.flags & configure::VERBOSE != 0 {
+            eprintln!("concurr [INFO]: spawning {} slots in client", cores);
+        }
+
         for _ in 0..cores {
             let command = command.clone();
             let inputs = inputs.clone();
@@ -108,7 +112,7 @@ fn main() {
     // Spawn slots for submitting inputs to each external node.
     for node in &nodes {
         if config.flags & configure::VERBOSE != 0 {
-            eprintln!("concurr [INFO]: found {} cores on {:?}", node.cores, node.address);
+            eprintln!("concurr [INFO]: spawning {} slots on {:?}", node.cores, node.address);
         }
         let domain = Arc::new(node.domain.clone());
         for _ in 0..node.cores {
@@ -138,7 +142,6 @@ fn main() {
             let total_inputs = total_inputs.clone();
             let inputs_finished = inputs_finished.clone();
             thread::spawn(move || {
-                let inputs_finished = inputs_finished.clone();
                 let ninputs = &mut 0;
                 source::file(&inputs, &path, ninputs);
                 total_inputs.store(*ninputs, Ordering::SeqCst);
@@ -158,7 +161,7 @@ fn main() {
         ArgsSource::Cli(args) => {
             // This branch will generate permutations of the inputs to use as inputs.
             if args.len() != 1 {
-                unimplemented!()
+                unimplemented!("permutations currently unsupported")
             }
 
             let total_inputs = total_inputs.clone();
@@ -194,16 +197,11 @@ fn main() {
     while !(inputs_finished.load(Ordering::Relaxed)
         && counter == total_inputs.load(Ordering::Relaxed))
     {
-        match outputs.remove(&counter) {
-            Output::Succeeded(mut source) => {
+        // The get method blocks until the next output is found.
+        match outputs.get(&counter) {
+            Output::Outcome(status, mut source) => {
                 if config.flags & configure::VERBOSE != 0 {
-                    let _ = writeln!(stdout, "Job {}: 0", counter);
-                }
-                source.write(stdout)
-            }
-            Output::Errored(status, mut source) => {
-                if config.flags & configure::VERBOSE != 0 {
-                    let _ = writeln!(stdout, "Job {}: {}", counter, status);
+                    let _ = writeln!(stdout, "\nconcurr [INFO] Job {}: {}", counter, status);
                 }
                 source.write(stdout);
             }

@@ -5,9 +5,8 @@
 Originally inspired by the GNU Parallel project, and my previous re-implementation of the project
 in Rust, Concurr is a distributed and concurrent command-line job server & client architecture for
 generating and executing commands in parallel on any number of systems. At it's core, Concurr
-uses Tokio to perform asynchronous network I/O, and executes generated commands within embedded
-instances of the Ion Shell. The client works similarly to GNU Parallel, but there are key
-differences for the sake of simplicity in operation.
+uses Tokio to perform asynchronous network I/O. The client works similarly to GNU Parallel, but
+there are key differences for the sake of simplicity in operation.
 
 ## The Client
 
