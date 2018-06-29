@@ -16,7 +16,7 @@ name = "concurr-jobsd"
 path = "src/server/main.rs"
 
 [dependencies]
-app_dirs = "1.1"
+app_dirs = "1.2.1"
 bytes = "0.4"
 chashmap = "2.2.0"
 coco = "0.3.0"
